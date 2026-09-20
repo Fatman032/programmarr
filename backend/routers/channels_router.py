@@ -15,6 +15,7 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 import channel_engine  # noqa: E402
+import notices         # noqa: E402
 import scheduler       # noqa: E402  (shared deploy_lock)
 import badge_renderer  # noqa: E402
 import icon_engine     # noqa: E402
@@ -51,6 +52,12 @@ def load() -> dict:
 def save(data: dict):
     with open(_path(), "w") as f:
         json.dump(data, f, indent=2)
+
+
+@router.get("/channel-notices")
+def channel_notices():
+    """Per channel: what its last resolve skipped (and why) or found again."""
+    return notices.load(DATA_DIR)
 
 
 @router.get("/channels")
@@ -119,13 +126,18 @@ async def apply_channel(number: int):
             if plex_url and plex_token:
                 plex_sections = channel_engine.get_plex_sections(plex_url, plex_token)
 
+        report = {}
         resolved, _missing = channel_engine.resolve_content(
             ch.get("content", []), movie_map, show_map,
             plex_url=plex_url, plex_token=plex_token,
             plex_sections=plex_sections, collection_cache=collection_cache,
             franchise_index=channel_engine.load_franchise_index(DATA_DIR),
-            id_index=id_index,
+            id_index=id_index, report=report,
         )
+        # Say what was skipped (or found again) instead of letting it vanish — recorded
+        # before anything below can fail, so even a channel that resolves to nothing
+        # explains itself.
+        notice = notices.record(DATA_DIR, number, report)
         if not resolved:
             raise channel_engine.ChannelEngineError(
                 "resolved to empty — refusing to wipe the channel")
@@ -139,12 +151,25 @@ async def apply_channel(number: int):
         channel_engine.update_channel_in_place(
             tunarr_url, number, ch.get("shuffle", "shuffle"), resolved, pad_ms=pad_ms,
             expected_name=ch.get("name"), playback=ch.get("playback"))
-        return len(resolved)
+
+        # An entry whose main number went stale but was found through a spare gets its
+        # current numbers written back, so the next resolve matches on the first number.
+        # Re-loaded fresh, and only that channel's content is touched.
+        if report.get("healed"):
+            data = load()
+            for saved in data.get("channels", []):
+                if saved.get("number") == number:
+                    refreshed = channel_engine.apply_healed(saved.get("content", []), report["healed"])
+                    if refreshed != saved.get("content"):
+                        saved["content"] = refreshed
+                        save(data)
+                    break
+        return len(resolved), notice
 
     try:
         async with scheduler.deploy_lock:
-            count = await asyncio.to_thread(_do)
-        return {"ok": True, "number": number, "program_count": count}
+            count, notice = await asyncio.to_thread(_do)
+        return {"ok": True, "number": number, "program_count": count, "notice": notice}
     except channel_engine.ChannelEngineError as e:
         raise HTTPException(409, str(e))
 

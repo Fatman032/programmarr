@@ -473,6 +473,28 @@ def find_by_title(title, id_index, kind=None):
     return found
 
 
+def apply_healed(content, healed):
+    """A channel's content with each entry that resolve_content re-found through a backup
+    number (report["healed"]) refreshed to the item's current numbers, year and title —
+    so the next resolve matches on the first number again instead of healing every time.
+    An entry that is no longer exactly what was resolved (the person edited the channel in
+    between) is left alone."""
+    by_entry = {json.dumps(h["entry"], sort_keys=True): h for h in healed}
+    out = []
+    for entry in content:
+        h = by_entry.get(json.dumps(entry, sort_keys=True)) if isinstance(entry, dict) else None
+        if h is None:
+            out.append(entry)
+            continue
+        new = dict(entry)
+        new[h["kind"]] = h["title"]
+        new["ids"] = h["ids"]
+        if h.get("year"):
+            new["year"] = h["year"]
+        out.append(new)
+    return out
+
+
 def resolve_by_ids(kind, ids, title, year, id_index):
     """Find the exact movie/show a saved channel entry means — without guessing.
 
@@ -784,7 +806,7 @@ def _resolve_collection_member(member, movie_map, show_map, id_index):
 
 def resolve_content(content_list, movie_map, show_map,
                     plex_url=None, plex_token=None, plex_sections=None, collection_cache=None,
-                    franchise_index=None, id_index=None):
+                    franchise_index=None, id_index=None, report=None):
     """Resolve a channel's content list into (resolved_items, missing).
 
     Each entry is one of:
@@ -808,6 +830,13 @@ def resolve_content(content_list, movie_map, show_map,
 
     Returns (resolved_items, missing): resolved_items are ready for build_schedule;
     missing is a list of titles/ref labels that could not be found.
+
+    Pass a dict as `report` to also learn WHY, so a screen can tell the person instead of
+    the item vanishing silently. It is filled with:
+      report["missing"] = [{"label": .., "why": ..}]   — what was skipped, and the reason
+      report["healed"]  = [{"entry", "kind", "title", "year", "ids"}]
+    a saved entry whose main number went stale but was found again through a spare
+    (`entry` is the entry as saved, `ids`/`year`/`title` are the item's current ones).
     """
     plex_sections = plex_sections or []
     collection_cache = collection_cache if collection_cache is not None else {}
@@ -816,6 +845,12 @@ def resolve_content(content_list, movie_map, show_map,
     expanded_titles = []
     matched_items = []
     missing = []
+
+    def _miss(label, why):
+        missing.append(label)
+        if report is not None:
+            report.setdefault("missing", []).append({"label": label, "why": why})
+
     for entry in content_list:
         if isinstance(entry, dict) and ("movie" in entry or "show" in entry):
             kind = "movie" if "movie" in entry else "show"
@@ -825,10 +860,15 @@ def resolve_content(content_list, movie_map, show_map,
                     expanded_titles.append(_Resolved(item))  # keeps its place in the order
                     if status == "healed":
                         print(f"    Note: '{entry[kind]}' was found again through a backup number")
+                        if report is not None:
+                            report.setdefault("healed", []).append({
+                                "entry": dict(entry), "kind": kind, "title": item["title"],
+                                "year": item.get("year"), "ids": dict(item["ids"])})
                 else:
                     why = "matches more than one item" if status == "ambiguous" else "was not found"
                     print(f"    WARNING: '{entry[kind]}' {why} (by its saved numbers, or by title + year)")
-                    missing.append(entry[kind])
+                    _miss(entry[kind], "matches more than one item — open the channel and pick which"
+                          if status == "ambiguous" else "not found in your library")
             else:
                 expanded_titles.append((entry[kind], kind))  # resolved in order below
         elif isinstance(entry, dict) and "collection" in entry:
@@ -839,7 +879,7 @@ def resolve_content(content_list, movie_map, show_map,
                 print(f"    Collection '{col_name}': {len(col_members)} titles")
             else:
                 print(f"    WARNING: Collection '{col_name}' not found in Plex")
-                missing.append(f"[collection:{col_name}]")
+                _miss(f"[collection:{col_name}]", "collection not found in Plex")
         elif isinstance(entry, dict) and "match" in entry:
             if entry["match"] == "franchise" and entry.get("name"):
                 fr_name = entry["name"]
@@ -850,7 +890,7 @@ def resolve_content(content_list, movie_map, show_map,
                     print(f"    Franchise '{fr_name}': {len(items)} titles")
                 else:
                     print(f"    WARNING: franchise '{fr_name}' matched nothing (cache missing or no library members)")
-                    missing.append(f"[franchise:{fr_name}]")
+                    _miss(f"[franchise:{fr_name}]", "franchise matched nothing in your library")
             elif entry["match"] == "title_contains" and entry.get("value"):
                 value = entry["value"]
                 items, _ = match_titles(value, movie_map, show_map,
@@ -860,11 +900,11 @@ def resolve_content(content_list, movie_map, show_map,
                     print(f"    Match '{value}': {len(items)} titles")
                 else:
                     print(f"    WARNING: match '{value}' matched nothing in library")
-                    missing.append(f"[match:{value}]")
+                    _miss(f"[match:{value}]", "matched nothing in your library")
             else:
                 value = entry.get("value", "")
                 print(f"    WARNING: unsupported match ref: {entry}")
-                missing.append(f"[match:{value or entry.get('match')}]")
+                _miss(f"[match:{value or entry.get('match')}]", "unsupported reference")
         else:
             expanded_titles.append(entry)
 
@@ -882,7 +922,7 @@ def resolve_content(content_list, movie_map, show_map,
         if item:
             resolved.append(item)
         else:
-            missing.append(title)
+            _miss(title, "not found in your library")
 
     resolved.extend(matched_items)
     return resolved, missing
