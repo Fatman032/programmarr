@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, Channel, ChannelNotice, ChannelSyncState, ContentItem, FillerList, FranchiseRef, isMatchRef, LibraryMatch, RecipeMatch, TunarrChannel } from '../api/client';
+import { AmbiguousChoice, api, Channel, ChannelNotice, ChannelReview, ChannelSyncState, ContentItem, FillerList, FranchiseRef, isMatchRef, LibraryMatch, RecipeMatch, TunarrChannel } from '../api/client';
 
 function syncedAgo(iso?: string): string {
   if (!iso) return 'never';
@@ -23,7 +23,7 @@ function syncedAgo(iso?: string): string {
 
 // What a channel's last update skipped or found again — shown on its row and in its editor,
 // so an item that stops matching is never silently dropped.
-function noticeText(n: ChannelNotice): string {
+function noticeText(n: Pick<ChannelReview, 'missing_count' | 'healed_count'>): string {
   const parts: string[] = [];
   if (n.missing_count) {
     parts.push(`${n.missing_count} item${n.missing_count === 1 ? '' : 's'} couldn't be found and ${n.missing_count === 1 ? 'was' : 'were'} skipped`);
@@ -32,6 +32,13 @@ function noticeText(n: ChannelNotice): string {
     parts.push(`${n.healed_count} ${n.healed_count === 1 ? 'was' : 'were'} found again through a backup number`);
   }
   return parts.join('; ');
+}
+
+// "1991" / "2017" — or "movie 2017" / "show 1975" when the choice mixes movies and shows.
+function optionLabel(a: AmbiguousChoice, o: AmbiguousChoice['options'][number]): string {
+  const mixed = new Set(a.options.map((x) => x.kind)).size > 1;
+  const year = o.year ? String(o.year) : o.title;
+  return mixed ? `${o.kind} ${year}` : year;
 }
 
 const SHUFFLE_COLOR: Record<string, string> = { ordered: 'blue', block: 'violet', shuffle: 'teal' };
@@ -196,13 +203,11 @@ function ChannelModal({
   opened,
   onClose,
   onSaved,
-  notice,
 }: {
   channel: Channel | null;
   opened: boolean;
   onClose: () => void;
   onSaved: () => void;
-  notice?: ChannelNotice | null;
 }) {
   const [name, setName] = useState('');
   const [number, setNumber] = useState('');
@@ -210,6 +215,8 @@ function ChannelModal({
   const [content, setContent] = useState<ContentRow[]>([]);
   const [newItem, setNewItem] = useState('');
   const [looking, setLooking] = useState(false);
+  // A live check of this channel against the library, fetched when the editor opens.
+  const [review, setReview] = useState<ChannelReview | null>(null);
   const [choices, setChoices] = useState<{ text: string; matches: LibraryMatch[] } | null>(null);
   const [live, setLive] = useState(false);
   const [matchRef, setMatchRef] = useState<MatchRule | null>(null);
@@ -265,6 +272,38 @@ function ChannelModal({
         .map(rowFromEntry)
     );
   }, [channel]);
+
+  useEffect(() => {
+    setReview(null);
+    if (!channel || !opened) return;
+    let alive = true;
+    api.getChannelReview(channel.number).then((r) => { if (alive) setReview(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [channel, opened]);
+
+  // Swap a plain title for the exact item(s) the person picked. Nothing is saved until
+  // Save and Apply, like every other edit here.
+  function choose(a: AmbiguousChoice, options: AmbiguousChoice['options']) {
+    const want = a.label.toLowerCase().trim();
+    const isTarget = (row: ContentRow) => {
+      if (row.raw === null) return row.label.toLowerCase().trim() === want;
+      const o = row.raw as unknown as Record<string, unknown>;
+      const title = o.movie ?? o.show;
+      return typeof title === 'string' && !o.ids && title.toLowerCase().trim() === want;
+    };
+    setContent((rows) => {
+      const out: ContentRow[] = [];
+      let placed = false;
+      for (const r of rows) {
+        if (!isTarget(r)) { out.push(r); continue; }
+        if (!placed) { options.forEach((o) => out.push(rowFromEntry(o.entry))); placed = true; }
+      }
+      return out;
+    });
+    setReview((r) => (r ? {
+      ...r, ambiguous: r.ambiguous.filter((x) => x !== a), ambiguous_count: Math.max(0, r.ambiguous_count - 1),
+    } : r));
+  }
 
   function pushRow(row: ContentRow) {
     setContent((c) => [...c, row]);
@@ -355,6 +394,12 @@ function ChannelModal({
           color: 'green', icon: <IconCheck size={14} />,
         });
       }
+      if (n?.ambiguous_count) {
+        notifications.show({
+          color: 'blue', autoClose: 10000,
+          message: `${n.ambiguous_count} title${n.ambiguous_count === 1 ? '' : 's'} in channel #${channel.number} still match more than one item — open it to choose which.`,
+        });
+      }
       onSaved();
       onClose();
     } catch (e: any) {
@@ -414,22 +459,49 @@ function ChannelModal({
 
         <Divider label="Content" labelPosition="left" />
 
-        {notice && (notice.missing_count > 0 || notice.healed_count > 0) && (
+        {review && (review.missing_count > 0 || review.healed_count > 0) && (
           <Card withBorder p="xs" style={{ background: 'var(--surface-panel)' }}>
-            <Text size="xs" fw={600} c="yellow" mb={4}>⚠ At the last update: {noticeText(notice)}.</Text>
-            {notice.missing.map((m, i) => (
+            <Text size="xs" fw={600} c="yellow" mb={4}>⚠ Right now: {noticeText(review)}.</Text>
+            {review.missing.map((m, i) => (
               <Text key={i} size="xs" style={{ fontFamily: 'ui-monospace, monospace' }}>
                 {m.label} <Text span c="dimmed">— {m.why}</Text>
               </Text>
             ))}
-            {notice.missing_count > notice.missing.length && (
-              <Text size="xs" c="dimmed">…and {notice.missing_count - notice.missing.length} more</Text>
+            {review.missing_count > review.missing.length && (
+              <Text size="xs" c="dimmed">…and {review.missing_count - review.missing.length} more</Text>
             )}
-            {notice.missing.length > 0 && (
+            {review.missing.length > 0 && (
               <Text size="xs" c="dimmed" mt={4}>
                 To fix one: remove it below (✕) and add it again — the Add box offers the right match.
               </Text>
             )}
+          </Card>
+        )}
+
+        {review && review.ambiguous.length > 0 && (
+          <Card withBorder p="xs" style={{ background: 'var(--surface-panel)' }}>
+            <Text size="xs" fw={600} c="orange" mb={4}>
+              {review.ambiguous_count} title{review.ambiguous_count === 1 ? '' : 's'} match more than one item — pick which to play:
+            </Text>
+            <Stack gap={6} style={{ maxHeight: 280, overflowY: 'auto' }}>
+              {review.ambiguous.map((a) => (
+                <Group key={`${a.label}|${a.kind ?? ''}`} gap={6}>
+                  <Text size="xs" style={{ fontFamily: 'ui-monospace, monospace' }}>{a.label}</Text>
+                  {a.options.map((o, i) => (
+                    <Button key={i} size="compact-xs" variant="light" color="orange" onClick={() => choose(a, [o])}>
+                      {optionLabel(a, o)}
+                    </Button>
+                  ))}
+                  <Button size="compact-xs" variant="subtle" color="gray" onClick={() => choose(a, a.options)}>
+                    Both
+                  </Button>
+                  {a.current !== null && a.options[a.current] && (
+                    <Text size="xs" c="dimmed">plays now: {optionLabel(a, a.options[a.current])}</Text>
+                  )}
+                </Group>
+              ))}
+            </Stack>
+            <Text size="xs" c="dimmed" mt={4}>Your choices take effect after Save and Apply.</Text>
           </Card>
         )}
 
@@ -703,6 +775,24 @@ function ChannelRow({
               <Text size="xs" c="dimmed">synced {syncedAgo(sync.checked_at)}</Text>
             </Group>
           )}
+          {notice && (notice.ambiguous_count ?? 0) > 0 && (
+            <Tooltip
+              multiline w={340}
+              label={
+                <Stack gap={2}>
+                  <Text size="xs">Match more than one item — open the channel to choose:</Text>
+                  {(notice.ambiguous ?? []).slice(0, 8).map((a, i) => (
+                    <Text key={i} size="xs">{a.label}</Text>
+                  ))}
+                  {(notice.ambiguous_count ?? 0) > 8 && <Text size="xs">…and {(notice.ambiguous_count ?? 0) - 8} more</Text>}
+                </Stack>
+              }
+            >
+              <Badge size="xs" color="blue" variant="light" mt={2} mr={4} style={{ cursor: 'default' }}>
+                {notice.ambiguous_count} to review
+              </Badge>
+            </Tooltip>
+          )}
           {notice && notice.missing_count > 0 && (
             <Tooltip
               multiline w={340}
@@ -868,7 +958,6 @@ export default function Channels() {
         opened={opened}
         onClose={handleClose}
         onSaved={load}
-        notice={editing ? notices[String(editing.number)] : undefined}
       />
     </Stack>
   );

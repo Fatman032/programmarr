@@ -132,6 +132,8 @@ export const api = {
       `/channels/${n}/apply`, { method: 'POST' }),
   // Per channel: what its last update skipped (and why) or found again through a backup number.
   getChannelNotices: () => req<Record<string, ChannelNotice>>('/channel-notices'),
+  // Check one channel against the library right now (skipped items, backup-number finds, ambiguous titles).
+  getChannelReview: (n: number) => req<ChannelReview>(`/channels/${n}/review`),
 
   // ── Planner state ──
   getPlannerState: () => req<PlannerStateFile>('/pipeline/planner-state'),
@@ -240,11 +242,27 @@ export interface CycleSummary {
   time: string; apply: boolean; live: number; changed: number;
   changes: CycleChange[]; skipped: CycleSkip[]; error: string | null;
 }
-export interface ChannelNotice {
-  at: string;
+// A plain title that names more than one movie/show: the options (each with the entry that
+// pins it) and which one the channel plays right now.
+export interface AmbiguousChoice {
+  label: string;
+  kind: 'movie' | 'show' | null;
+  current: number | null;
+  options: { kind: 'movie' | 'show'; title: string; year: number | null; entry: MovieRef | ShowRef }[];
+}
+// A live check of one channel against the library (nothing is written or deployed).
+export interface ChannelReview {
   missing_count: number;
   missing: { label: string; why: string }[];   // capped for display; missing_count is the true total
   healed_count: number;
+  ambiguous_count: number;
+  ambiguous: AmbiguousChoice[];
+}
+// What the last Apply / auto-update saw. Older ones (before ambiguity was checked) lack the last two fields.
+export interface ChannelNotice extends Omit<ChannelReview, 'ambiguous_count' | 'ambiguous'> {
+  at: string;
+  ambiguous_count?: number;
+  ambiguous?: AmbiguousChoice[];
 }
 export interface ChannelSyncState { checked_at?: string; changed_at?: string; change_summary?: string }
 export interface RecipesStatus {
