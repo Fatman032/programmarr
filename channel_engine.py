@@ -296,7 +296,13 @@ def _build_id_index(movie_items, show_items):
         for (source, value), item in by_id[kind].items():
             if source == "plex":
                 by_plex_rating[kind].setdefault(value.split(":", 1)[-1], []).append(item)
-    return {"by_id": by_id, "all": kinds, "by_plex_rating": by_plex_rating}
+    by_title = {"movie": {}, "show": {}}
+    for kind, items in kinds.items():
+        for item in items:
+            key = item["title"].lower().strip()
+            if key:
+                by_title[kind].setdefault(key, []).append(item)
+    return {"by_id": by_id, "all": kinds, "by_plex_rating": by_plex_rating, "by_title": by_title}
 
 
 def find_by_plex_id(kind, plex_id, id_index):
@@ -464,13 +470,44 @@ def find_by_title(title, id_index, kind=None):
     found = []
     for k in ((kind,) if kind else ("movie", "show")):
         groups = {}
-        for item in id_index["all"].get(k, []):
-            if item["title"].lower().strip() == want:
-                identity = item["ids"].get("tmdb") or item["ids"].get("tunarr") or id(item)
-                groups.setdefault(identity, []).append(item)
+        by_title = id_index.get("by_title")
+        pool = (by_title[k].get(want, []) if by_title is not None
+                else [it for it in id_index["all"].get(k, []) if it["title"].lower().strip() == want])
+        for item in pool:
+            identity = item["ids"].get("tmdb") or item["ids"].get("tunarr") or id(item)
+            groups.setdefault(identity, []).append(item)
         picked = [_best_copy(items) for items in groups.values()]
         found += sorted(picked, key=lambda it: (it.get("year") or 0, it["title"]))
     return found
+
+
+def entry_for_item(item):
+    """The channel entry that pins exactly this item: the developer's own typed ref plus
+    the item's year and numbers."""
+    kind = "movie" if item["type"] == "Movie" else "show"
+    entry = {kind: item["title"], "ids": item["ids"]}
+    if item.get("year"):
+        entry["year"] = item["year"]
+    return entry
+
+
+def _find_ambiguity(title, kind, movie_map, show_map, id_index):
+    """If `title` (optionally limited to a movie/show) names more than one thing in the
+    library, describe the choice: the options — each with its ready-to-save pinned entry —
+    and which one the channel plays right now (title lookups keep only one)."""
+    options = find_by_title(title, id_index, kind)
+    if len(options) < 2:
+        return None
+    playing = resolve_title(title, movie_map, show_map, kind=kind)
+    current = None
+    if playing:
+        playing_id = playing["showId"] if playing["type"] == "TV" else playing["programs"][0].get("id")
+        current = next((i for i, o in enumerate(options) if o["ids"].get("tunarr") == str(playing_id)), None)
+    return {
+        "label": title, "kind": kind, "current": current,
+        "options": [{"kind": "movie" if o["type"] == "Movie" else "show", "title": o["title"],
+                     "year": o.get("year"), "entry": entry_for_item(o)} for o in options],
+    }
 
 
 def apply_healed(content, healed):
@@ -834,6 +871,9 @@ def resolve_content(content_list, movie_map, show_map,
     Pass a dict as `report` to also learn WHY, so a screen can tell the person instead of
     the item vanishing silently. It is filled with:
       report["missing"] = [{"label": .., "why": ..}]   — what was skipped, and the reason
+      report["ambiguous"] = [{"label", "kind", "current", "options"}]
+    a plain title that names more than one movie/show, with each option's ready-to-save
+    entry and which one plays now (needs `id_index`),
       report["healed"]  = [{"entry", "kind", "title", "year", "ids"}]
     a saved entry whose main number went stale but was found again through a spare
     (`entry` is the entry as saved, `ids`/`year`/`title` are the item's current ones).
@@ -850,6 +890,21 @@ def resolve_content(content_list, movie_map, show_map,
         missing.append(label)
         if report is not None:
             report.setdefault("missing", []).append({"label": label, "why": why})
+
+    flagged = set()
+
+    def _flag_ambiguous(title, kind):
+        """A plain title (or a typed one without numbers) that names more than one thing
+        is played as ONE of them, chosen arbitrarily — so say so, and let the person pick."""
+        if report is None or id_index is None:
+            return
+        key = (title.lower().strip(), kind)
+        if key in flagged:
+            return
+        flagged.add(key)
+        found = _find_ambiguity(title, kind, movie_map, show_map, id_index)
+        if found:
+            report.setdefault("ambiguous", []).append(found)
 
     for entry in content_list:
         if isinstance(entry, dict) and ("movie" in entry or "show" in entry):
@@ -870,6 +925,7 @@ def resolve_content(content_list, movie_map, show_map,
                     _miss(entry[kind], "matches more than one item — open the channel and pick which"
                           if status == "ambiguous" else "not found in your library")
             else:
+                _flag_ambiguous(entry[kind], kind)
                 expanded_titles.append((entry[kind], kind))  # resolved in order below
         elif isinstance(entry, dict) and "collection" in entry:
             col_name = entry["collection"]
@@ -906,6 +962,8 @@ def resolve_content(content_list, movie_map, show_map,
                 print(f"    WARNING: unsupported match ref: {entry}")
                 _miss(f"[match:{value or entry.get('match')}]", "unsupported reference")
         else:
+            if isinstance(entry, str):
+                _flag_ambiguous(entry, None)
             expanded_titles.append(entry)
 
     resolved = []

@@ -13,6 +13,7 @@ from pathlib import Path
 
 FILE = "channel_notices.json"
 MAX_SHOWN = 25  # a collection with 300 unsynced members shouldn't become a 300-line warning
+MAX_AMBIGUOUS = 50
 
 
 def load(data_dir) -> dict:
@@ -28,13 +29,16 @@ def summarize(report) -> dict | None:
     """The notice for one channel from a resolve_content `report`; None when it is clean."""
     missing = (report or {}).get("missing", [])
     healed = (report or {}).get("healed", [])
-    if not missing and not healed:
+    ambiguous = (report or {}).get("ambiguous", [])
+    if not missing and not healed and not ambiguous:
         return None
     return {
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "missing_count": len(missing),
         "missing": [{"label": str(m["label"])[:120], "why": m["why"]} for m in missing[:MAX_SHOWN]],
         "healed_count": len(healed),
+        "ambiguous_count": len(ambiguous),
+        "ambiguous": ambiguous[:MAX_AMBIGUOUS],
     }
 
 
