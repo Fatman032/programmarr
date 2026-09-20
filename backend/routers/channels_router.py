@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -227,6 +229,48 @@ async def channel_icon(number: int, body: dict):
         ch["icon"] = {"mode": mode, "url": url, "pinned": True}
     save(data)
     return {"ok": True, "mode": mode, "url": url}
+
+
+# The Add box asks "which items have this title?" on every add. Building the id index
+# scans all of Tunarr's libraries, so keep the last one for a few minutes.
+_INDEX_TTL_SECONDS = 300
+_index_cache = {"at": 0.0, "index": None}
+_index_lock = threading.Lock()
+
+
+def _cached_id_index(tunarr_url, refresh=False):
+    with _index_lock:
+        stale = time.monotonic() - _index_cache["at"] > _INDEX_TTL_SECONDS
+        if refresh or stale or _index_cache["index"] is None:
+            _, _, index = channel_engine.build_library_index_with_ids(tunarr_url)
+            _index_cache.update(at=time.monotonic(), index=index)
+        return _index_cache["index"]
+
+
+@router.get("/library/lookup")
+async def library_lookup(title: str, kind: str = "", refresh: bool = False):
+    """Every movie/show in the library with exactly this title, each with a ready-to-save
+    channel entry that carries its own numbers ({"movie": .., "year": .., "ids": {..}}).
+    One match: the Add box pins it. Several: it asks. None: it adds the text as typed."""
+    if kind not in ("", "movie", "show"):
+        raise HTTPException(400, "kind must be 'movie' or 'show'")
+    cfg = _load_config()
+    tunarr_url = cfg.get("tunarr_url", "").rstrip("/")
+    if not tunarr_url:
+        raise HTTPException(400, "Tunarr not configured")
+    channel_engine.set_tunarr_auth_from_config(cfg)
+    try:
+        index = await asyncio.to_thread(_cached_id_index, tunarr_url, refresh)
+    except channel_engine.ChannelEngineError as e:
+        raise HTTPException(502, str(e))
+    matches = []
+    for item in channel_engine.find_by_title(title, index, kind or None):
+        k = "movie" if item["type"] == "Movie" else "show"
+        entry = {k: item["title"], "ids": item["ids"]}
+        if item.get("year"):
+            entry["year"] = item["year"]
+        matches.append({"kind": k, "title": item["title"], "year": item.get("year"), "entry": entry})
+    return {"matches": matches}
 
 
 @router.get("/library/titles")
