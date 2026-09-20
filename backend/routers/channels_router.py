@@ -146,11 +146,10 @@ async def apply_channel(number: int):
             raise channel_engine.ChannelEngineError(
                 f"Channel #{number} not in Tunarr — create it in the Planner first")
 
-        comm = ch.get("commercials") or {}
-        pad_ms = int(comm.get("pad_minutes", 5)) * 60000 if comm.get("filler_list_id") else 0
+        pad_ms, filler_ids = channel_engine.commercial_settings(ch.get("commercials"))
         channel_engine.update_channel_in_place(
             tunarr_url, number, ch.get("shuffle", "shuffle"), resolved, pad_ms=pad_ms,
-            expected_name=ch.get("name"), playback=ch.get("playback"))
+            expected_name=ch.get("name"), playback=ch.get("playback"), filler_list_ids=filler_ids)
 
         # An entry whose main number went stale but was found through a spare gets its
         # current numbers written back, so the next resolve matches on the first number.

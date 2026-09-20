@@ -1268,7 +1268,71 @@ def read_channel_programming(tunarr_url, channel_id):
     return {i["id"] for i in pr.get("lineup", []) if i.get("type") == "content" and i.get("id")}
 
 
-def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, expected_name=None, playback=None):
+# ── Commercials: which filler lists a channel pulls its breaks from ─────────────
+
+FILLER_WEIGHT = 100        # equal weights = an even mix of the lists
+FILLER_COOLDOWN_S = 30
+
+
+def commercial_list_ids(commercials):
+    """The filler-list ids a channel's `commercials` setting names, in order, no repeats.
+
+    Current settings carry `filler_list_ids`. A channels.json written before that only has
+    the single `filler_list_id`, which still counts. (New saves keep `filler_list_id` equal
+    to the first id, so a Programmarr that only knows one list keeps working.)
+    """
+    comm = commercials or {}
+    ids = comm.get("filler_list_ids")
+    if not isinstance(ids, list) or not ids:
+        ids = [comm.get("filler_list_id")]
+    out = []
+    for i in ids:
+        if isinstance(i, str) and i and i not in out:
+            out.append(i)
+    return out
+
+
+def commercial_settings(commercials):
+    """(pad_ms, filler_list_ids) for a channel's `commercials` setting; (0, []) when off."""
+    ids = commercial_list_ids(commercials)
+    if not ids:
+        return 0, []
+    return int((commercials or {}).get("pad_minutes", 5)) * 60000, ids
+
+
+def filler_collection(list_id):
+    return {"id": list_id, "weight": FILLER_WEIGHT, "cooldownSeconds": FILLER_COOLDOWN_S}
+
+
+def sync_channel_fillers(tunarr_url, channel_id, list_ids):
+    """Make the channel's attached filler lists match `list_ids` in Tunarr.
+
+    Attaching a list used to happen only when a channel was first created, so a list chosen
+    later in the editor was saved in Programmarr but never reached Tunarr. Returns True if
+    it changed anything, False if Tunarr already had exactly these lists. Lists that stay
+    keep their weight and cooldown (someone may have tuned them in Tunarr), and nothing is
+    sent when they already match. An empty `list_ids` changes nothing: turning commercials
+    off never strips lists someone attached by hand. Raises ChannelEngineError when Tunarr
+    can't be read or refuses the change.
+    """
+    if not list_ids:
+        return False
+    full = api(tunarr_url, "GET", f"/api/channels/{channel_id}")
+    if not isinstance(full, dict) or not full.get("id"):
+        raise ChannelEngineError("could not read the channel from Tunarr")
+    current = full.get("fillerCollections") or []
+    if {c.get("id") for c in current} == set(list_ids) and len(current) == len(list_ids):
+        return False
+    keep = {c.get("id"): c for c in current if c.get("id")}
+    updated = dict(full)
+    updated["fillerCollections"] = [keep.get(i) or filler_collection(i) for i in list_ids]
+    if api(tunarr_url, "PUT", f"/api/channels/{channel_id}", body=updated, timeout=30) is None:
+        raise ChannelEngineError("Tunarr did not accept the commercial lists")
+    return True
+
+
+def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, expected_name=None, playback=None,
+                            filler_list_ids=None):
     """Patch an existing channel's programming in place — never delete/recreate.
 
     Looks the channel up by number (preserving its Tunarr id and Plex DVR mapping),
@@ -1276,9 +1340,12 @@ def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, exp
     live-channel scheduler calls after detecting a content change. Raises
     ChannelEngineError if the channel is missing or no schedule can be built.
 
-    pad_ms preserves a commercials channel's gap on live updates (the attached filler
-    list survives — only programming is replaced — but the pad must be re-applied or the
-    gap, and thus the commercials, would vanish after a cycle). Similarly, playback
+    pad_ms preserves a commercials channel's gap on live updates (the pad must be
+    re-applied or the gap, and thus the commercials, would vanish after a cycle).
+    filler_list_ids are the lists that fill those gaps: they are attached to the Tunarr
+    channel here too (see sync_channel_fillers), so a list picked in the editor takes
+    effect on Apply instead of only being remembered. None/empty leaves the channel's
+    attached lists alone. Similarly, playback
     (the per-channel structure dict) must be re-applied on live updates for the same
     reason as pad_ms — omitting it would silently revert an interleaved or timeline
     channel to the default shuffle behavior after each cycle.
@@ -1302,4 +1369,12 @@ def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, exp
     schedule = build_schedule(SHUFFLE_MAP.get(shuffle, "shuffle"), resolved, pad_ms=pad_ms, playback=playback)
     if not schedule:
         raise ChannelEngineError(f"Channel #{number}: no schedule could be built (no content resolved)")
-    return set_programming(tunarr_url, ch["id"], schedule)
+    result = set_programming(tunarr_url, ch["id"], schedule)
+    if filler_list_ids:
+        try:
+            sync_channel_fillers(tunarr_url, ch["id"], filler_list_ids)
+        except ChannelEngineError as e:
+            raise ChannelEngineError(
+                f"Channel #{number}: the schedule was updated, but the commercial lists "
+                f"could not be attached ({e})")
+    return result

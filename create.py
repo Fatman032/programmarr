@@ -29,6 +29,8 @@ from channel_engine import (
     api,
     build_library_index_with_ids,
     build_schedule,
+    commercial_settings,
+    filler_collection,
     get_plex_sections,
     get_transcode_config,
     load_franchise_index,
@@ -138,15 +140,13 @@ def delete_channels(tunarr_url, probe, from_ch=None, protect=None):
         print(f"    {'[PROBE] ' if probe else ''}Preserving #{ch['number']} {ch['name']} (protected)")
 
 
-def create_channel(tunarr_url, number, name, transcode_id, filler_list_id=None,
+def create_channel(tunarr_url, number, name, transcode_id, filler_list_ids=None,
                    channel_group=None, stream_mode=None):
     channel_id = str(uuid.uuid4())
-    # Commercials: attach a filler list at the channel level. Tunarr's FillerPicker
-    # fills the schedule's flex gaps (opened by build_schedule's pad_ms) with these
-    # clips at playback. Empty list = no commercials (default).
-    filler_collections = (
-        [{"id": filler_list_id, "weight": 100, "cooldownSeconds": 30}] if filler_list_id else []
-    )
+    # Commercials: attach the filler lists at the channel level. Tunarr's FillerPicker
+    # fills the schedule's flex gaps (opened by build_schedule's pad_ms) with clips from
+    # these lists at playback. No lists = no commercials (default).
+    filler_collections = [filler_collection(i) for i in (filler_list_ids or [])]
     body = {
         "type": "new",
         "channel": {
@@ -283,10 +283,9 @@ def main():
         shuffle = SHUFFLE_MAP.get(ch.get("shuffle", "shuffle"), "shuffle")
         content_list = ch.get("content", [])
 
-        # Commercials (optional): attach a filler list + pad episodes to open the gap.
+        # Commercials (optional): attach the filler lists + pad episodes to open the gap.
         comm = ch.get("commercials") or {}
-        comm_filler = comm.get("filler_list_id")
-        comm_pad_ms = int(comm.get("pad_minutes", 5)) * 60000 if comm_filler else 0
+        comm_pad_ms, comm_filler = commercial_settings(comm)
 
         resolved, missing = resolve_content(
             content_list, movie_map, show_map,
@@ -315,7 +314,7 @@ def main():
             continue
 
         # Create channel
-        ch_result = create_channel(tunarr_url, number, name, transcode_id, filler_list_id=comm_filler,
+        ch_result = create_channel(tunarr_url, number, name, transcode_id, filler_list_ids=comm_filler,
                                    channel_group=channel_group, stream_mode=stream_mode)
         if not ch_result:
             print(f"  FAIL #{number} {name} — channel creation failed")

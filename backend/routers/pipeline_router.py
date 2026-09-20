@@ -1839,7 +1839,7 @@ class ComposeRequest(BaseModel):
     start: int = 1
     # Applied to every channel built in this batch (surfaced as Planner toggles):
     live: bool = False                      # mark channels auto-updating
-    commercials: dict | None = None         # {filler_list_id, filler_list_name?, pad_minutes?}
+    commercials: dict | None = None         # {filler_list_ids, filler_list_id (= first), filler_list_name(s)?, pad_minutes?}
 
 
 # Which compose category (bucket) each candidate kind maps to, and its shuffle default.
@@ -2067,7 +2067,7 @@ def compose_channels(req: ComposeRequest):
     extras: dict = {}
     if req.live:
         extras["live"] = True
-    if req.commercials and req.commercials.get("filler_list_id"):
+    if req.commercials and channel_engine.commercial_list_ids(req.commercials):
         extras["commercials"] = req.commercials
 
     # Sequential tight-packed numbering: categories in configured order, no fixed sizes,
@@ -2551,11 +2551,11 @@ async def run_surgical_deploy():
                     if not resolved:
                         raise channel_engine.ChannelEngineError(
                             f"Channel #{n}: resolved to empty — refusing to update")
-                    comm = ch.get("commercials") or {}
-                    pad_ms = int(comm.get("pad_minutes", 5)) * 60000 if comm.get("filler_list_id") else 0
+                    pad_ms, filler_ids = channel_engine.commercial_settings(ch.get("commercials"))
                     channel_engine.update_channel_in_place(
                         tunarr_url, n, ch.get("shuffle", "shuffle"), resolved, pad_ms=pad_ms,
-                        expected_name=ch.get("name"), playback=ch.get("playback"))
+                        expected_name=ch.get("name"), playback=ch.get("playback"),
+                        filler_list_ids=filler_ids)
                     return missing
 
                 try:
