@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, Channel, ChannelSyncState, ContentItem, FillerList, FranchiseRef, isMatchRef, LibraryMatch, RecipeMatch, TunarrChannel } from '../api/client';
+import { api, Channel, ChannelNotice, ChannelSyncState, ContentItem, FillerList, FranchiseRef, isMatchRef, LibraryMatch, RecipeMatch, TunarrChannel } from '../api/client';
 
 function syncedAgo(iso?: string): string {
   if (!iso) return 'never';
@@ -19,6 +19,19 @@ function syncedAgo(iso?: string): string {
   if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
   if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
   return `${Math.round(secs / 86400)}d ago`;
+}
+
+// What a channel's last update skipped or found again — shown on its row and in its editor,
+// so an item that stops matching is never silently dropped.
+function noticeText(n: ChannelNotice): string {
+  const parts: string[] = [];
+  if (n.missing_count) {
+    parts.push(`${n.missing_count} item${n.missing_count === 1 ? '' : 's'} couldn't be found and ${n.missing_count === 1 ? 'was' : 'were'} skipped`);
+  }
+  if (n.healed_count) {
+    parts.push(`${n.healed_count} ${n.healed_count === 1 ? 'was' : 'were'} found again through a backup number`);
+  }
+  return parts.join('; ');
 }
 
 const SHUFFLE_COLOR: Record<string, string> = { ordered: 'blue', block: 'violet', shuffle: 'teal' };
@@ -183,11 +196,13 @@ function ChannelModal({
   opened,
   onClose,
   onSaved,
+  notice,
 }: {
   channel: Channel | null;
   opened: boolean;
   onClose: () => void;
   onSaved: () => void;
+  notice?: ChannelNotice | null;
 }) {
   const [name, setName] = useState('');
   const [number, setNumber] = useState('');
@@ -326,8 +341,20 @@ function ChannelModal({
     setSaving(true);
     try {
       await persist();
-      await api.applyChannel(channel.number);
-      notifications.show({ message: `Channel #${channel.number} saved and applied`, color: 'green', icon: <IconCheck size={14} /> });
+      const { notice: n } = await api.applyChannel(channel.number);
+      if (n && n.missing_count > 0) {
+        notifications.show({
+          color: 'yellow', autoClose: 15000,
+          title: `Channel #${channel.number} applied — ${n.missing_count} item${n.missing_count === 1 ? '' : 's'} skipped`,
+          message: n.missing.slice(0, 5).map((m) => `${m.label} (${m.why})`).join('; ')
+            + (n.missing_count > 5 ? `; …and ${n.missing_count - 5} more` : ''),
+        });
+      } else {
+        notifications.show({
+          message: `Channel #${channel.number} saved and applied` + (n?.healed_count ? ` (${noticeText(n)})` : ''),
+          color: 'green', icon: <IconCheck size={14} />,
+        });
+      }
       onSaved();
       onClose();
     } catch (e: any) {
@@ -386,6 +413,25 @@ function ChannelModal({
         />
 
         <Divider label="Content" labelPosition="left" />
+
+        {notice && (notice.missing_count > 0 || notice.healed_count > 0) && (
+          <Card withBorder p="xs" style={{ background: 'var(--surface-panel)' }}>
+            <Text size="xs" fw={600} c="yellow" mb={4}>⚠ At the last update: {noticeText(notice)}.</Text>
+            {notice.missing.map((m, i) => (
+              <Text key={i} size="xs" style={{ fontFamily: 'ui-monospace, monospace' }}>
+                {m.label} <Text span c="dimmed">— {m.why}</Text>
+              </Text>
+            ))}
+            {notice.missing_count > notice.missing.length && (
+              <Text size="xs" c="dimmed">…and {notice.missing_count - notice.missing.length} more</Text>
+            )}
+            {notice.missing.length > 0 && (
+              <Text size="xs" c="dimmed" mt={4}>
+                To fix one: remove it below (✕) and add it again — the Add box offers the right match.
+              </Text>
+            )}
+          </Card>
+        )}
 
         <Stack gap={4}>
           {content.map((row, i) => (
@@ -610,11 +656,13 @@ function ChannelModal({
 function ChannelRow({
   channel,
   sync,
+  notice,
   onEdit,
   onDelete,
 }: {
   channel: TunarrChannel;
   sync?: ChannelSyncState;
+  notice?: ChannelNotice;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -654,6 +702,23 @@ function ChannelRow({
               </Badge>
               <Text size="xs" c="dimmed">synced {syncedAgo(sync.checked_at)}</Text>
             </Group>
+          )}
+          {notice && notice.missing_count > 0 && (
+            <Tooltip
+              multiline w={340}
+              label={
+                <Stack gap={2}>
+                  {notice.missing.slice(0, 8).map((m, i) => (
+                    <Text key={i} size="xs">{m.label} — {m.why}</Text>
+                  ))}
+                  {notice.missing_count > 8 && <Text size="xs">…and {notice.missing_count - 8} more</Text>}
+                </Stack>
+              }
+            >
+              <Badge size="xs" color="yellow" variant="light" mt={2} style={{ cursor: 'default' }}>
+                ⚠ {notice.missing_count} skipped
+              </Badge>
+            </Tooltip>
           )}
         </Box>
 
@@ -705,6 +770,7 @@ export default function Channels() {
   const [channels, setChannels] = useState<TunarrChannel[]>([]);
   const [managed, setManaged] = useState<Set<number>>(new Set());
   const [sync, setSync] = useState<Record<string, ChannelSyncState>>({});
+  const [notices, setNotices] = useState<Record<string, ChannelNotice>>({});
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Channel | null>(null);
   const [opened, { open, close }] = useDisclosure(false);
@@ -718,6 +784,7 @@ export default function Channels() {
     setManaged(new Set(local.channels.map((c) => c.number)));
     setLoading(false);
     api.getRecipesStatus().then((s) => setSync(s.channels || {})).catch(() => {});
+    api.getChannelNotices().then(setNotices).catch(() => {});
   }
 
   useEffect(() => { load(); }, []);
@@ -785,6 +852,7 @@ export default function Channels() {
                 key={ch.number}
                 channel={ch}
                 sync={sync[String(ch.number)]}
+                notice={notices[String(ch.number)]}
                 onEdit={() => edit(ch)}
                 onDelete={() => load()}
               />
@@ -800,6 +868,7 @@ export default function Channels() {
         opened={opened}
         onClose={handleClose}
         onSaved={load}
+        notice={editing ? notices[String(editing.number)] : undefined}
       />
     </Stack>
   );

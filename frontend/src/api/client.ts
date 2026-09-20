@@ -128,8 +128,10 @@ export const api = {
       body: JSON.stringify(selections),
     }),
   applyChannel: (n: number) =>
-    req<{ ok: boolean; number: number; program_count: number }>(
+    req<{ ok: boolean; number: number; program_count: number; notice: ChannelNotice | null }>(
       `/channels/${n}/apply`, { method: 'POST' }),
+  // Per channel: what its last update skipped (and why) or found again through a backup number.
+  getChannelNotices: () => req<Record<string, ChannelNotice>>('/channel-notices'),
 
   // ── Planner state ──
   getPlannerState: () => req<PlannerStateFile>('/pipeline/planner-state'),
@@ -237,6 +239,12 @@ export interface CycleSkip { number: number; name: string; reason: string }
 export interface CycleSummary {
   time: string; apply: boolean; live: number; changed: number;
   changes: CycleChange[]; skipped: CycleSkip[]; error: string | null;
+}
+export interface ChannelNotice {
+  at: string;
+  missing_count: number;
+  missing: { label: string; why: string }[];   // capped for display; missing_count is the true total
+  healed_count: number;
 }
 export interface ChannelSyncState { checked_at?: string; changed_at?: string; change_summary?: string }
 export interface RecipesStatus {
