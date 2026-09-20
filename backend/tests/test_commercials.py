@@ -187,6 +187,8 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(scheduler, "LOGS_DIR", tmp_path / "logs")
     (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://t"}))
     monkeypatch.setattr(channel_engine, "build_library_index", lambda url: ({}, {}))
+    # (a build that also indexes by id calls this one instead — stub whichever exists)
+    monkeypatch.setattr(channel_engine, "build_library_index_with_ids", lambda url: ({}, {}, {}), raising=False)
     monkeypatch.setattr(channel_engine, "resolve_content", lambda *a, **k: (RESOLVED, []))
     monkeypatch.setattr(channel_engine, "load_franchise_index", lambda data_dir: {})
     monkeypatch.setattr(channel_engine, "find_channel_by_number",
