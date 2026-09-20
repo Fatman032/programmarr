@@ -204,9 +204,39 @@ export interface GuideProgramme { number: number; start: string; stop: string; t
 export interface Guide { channels: GuideChannel[]; programmes: GuideProgramme[]; error?: string }
 export interface FillerList { id: string; name: string; contentCount: number }
 export interface LibraryMatch { kind: 'movie' | 'show'; title: string; year: number | null; entry: MovieRef | ShowRef }
-// Commercials: a channel can pull from a Tunarr filler list, played in gaps
+// Commercials: a channel can pull from one or more Tunarr filler lists, played in gaps
 // between shows (pad_minutes controls the gap size). Absent = commercials off.
-export interface Commercials { filler_list_id: string; filler_list_name?: string; pad_minutes?: number }
+// `filler_list_id` is always the first of `filler_list_ids`; channels saved before there
+// could be several only have that one.
+export interface Commercials {
+  filler_list_id: string;
+  filler_list_ids?: string[];
+  filler_list_name?: string;
+  filler_list_names?: string[];
+  pad_minutes?: number;
+}
+
+/** The filler-list ids a commercials setting names (older saves have only the single id). */
+export function commercialListIds(c?: Commercials | null): string[] {
+  if (!c) return [];
+  const ids = c.filler_list_ids?.length ? c.filler_list_ids : c.filler_list_id ? [c.filler_list_id] : [];
+  return ids.filter((id, i) => !!id && ids.indexOf(id) === i);
+}
+
+/** The commercials setting for the chosen lists, or undefined when there are none. Lists Tunarr
+ *  no longer has are dropped (attaching a missing list would fail), unless the lists couldn't be
+ *  loaded at all — then what was chosen is kept as it is. */
+export function buildCommercials(ids: string[], lists: FillerList[], padMinutes: number): Commercials | undefined {
+  const known = lists.length ? ids.filter((id) => lists.some((f) => f.id === id)) : ids;
+  if (!known.length) return undefined;
+  return {
+    filler_list_id: known[0],
+    filler_list_ids: known,
+    filler_list_name: lists.find((f) => f.id === known[0])?.name,
+    filler_list_names: known.map((id) => lists.find((f) => f.id === id)?.name).filter((n): n is string => !!n),
+    pad_minutes: padMinutes,
+  };
+}
 export interface PlaybackSetting { structure: 'interleaved' | 'timeline'; episodes_per_block?: number }
 export interface MatchRef { match: 'title_contains'; value: string; order?: string | null; exclude?: string[] }
 export interface FranchiseRef { match: 'franchise'; name: string; order?: string | null; exclude?: string[] }
@@ -394,7 +424,8 @@ export interface PlannerStateFile {
   // batch toggles
   aiExtras: boolean;
   commEnabled: boolean;
-  commListId: string | null;
+  commListId: string | null;    // the first chosen list (older saves only have this one)
+  commListIds?: string[];
   commPad: string;
   autoUpdate: boolean;
 }

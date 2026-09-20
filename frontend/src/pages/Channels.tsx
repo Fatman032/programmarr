@@ -1,6 +1,6 @@
 import {
   ActionIcon, Badge, Box, Button, Card, Checkbox, Divider, Group,
-  Loader, Modal, NumberInput, ScrollArea, Select, Stack, Switch, Text, TextInput, Title,
+  Loader, Modal, MultiSelect, NumberInput, ScrollArea, Select, Stack, Switch, Text, TextInput, Title,
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AmbiguousChoice, api, Channel, ChannelNotice, ChannelReview, ChannelSyncState, ContentItem, FillerList, FranchiseRef, isMatchRef, LibraryMatch, RecipeMatch, TunarrChannel } from '../api/client';
+import { AmbiguousChoice, api, buildCommercials, Channel, ChannelNotice, ChannelReview, ChannelSyncState, commercialListIds, ContentItem, FillerList, FranchiseRef, isMatchRef, LibraryMatch, RecipeMatch, TunarrChannel } from '../api/client';
 
 function syncedAgo(iso?: string): string {
   if (!iso) return 'never';
@@ -226,7 +226,7 @@ function ChannelModal({
 
   // Commercials
   const [commEnabled, setCommEnabled] = useState(false);
-  const [commListId, setCommListId] = useState<string | null>(null);
+  const [commListIds, setCommListIds] = useState<string[]>([]);
   const [commPad, setCommPad] = useState('5');
   const [fillerLists, setFillerLists] = useState<FillerList[]>([]);
 
@@ -252,8 +252,9 @@ function ChannelModal({
     setLive(!!channel.live);
     setBuilding(false);
     const comm = channel.commercials;
-    setCommEnabled(!!comm?.filler_list_id);
-    setCommListId(comm?.filler_list_id ?? null);
+    const listIds = commercialListIds(comm);
+    setCommEnabled(listIds.length > 0);
+    setCommListIds(listIds);
     setCommPad(String(comm?.pad_minutes ?? 5));
 
     setIconUrl(channel.icon?.url ?? '');
@@ -358,13 +359,8 @@ function ChannelModal({
     franchiseRefs.forEach((ref) => rawContent.push(ref));
     const payload: any = { number: Number(number), name, shuffle, content: rawContent };
     if (live) payload.live = true;
-    if (commEnabled && commListId) {
-      payload.commercials = {
-        filler_list_id: commListId,
-        filler_list_name: fillerLists.find((f) => f.id === commListId)?.name,
-        pad_minutes: Number(commPad),
-      };
-    }
+    const commercials = commEnabled ? buildCommercials(commListIds, fillerLists, Number(commPad)) : undefined;
+    if (commercials) payload.commercials = commercials;
     if (pbStructure === 'interleaved') {
       payload.playback = { structure: 'interleaved', episodes_per_block: Number(pbEpisodes) || 4 };
     } else if (pbStructure === 'timeline') {
@@ -620,11 +616,11 @@ function ChannelModal({
           onChange={(e) => {
             const on = e.currentTarget.checked;
             setCommEnabled(on);
-            if (on && !commListId && fillerLists.length) setCommListId(fillerLists[0].id);
+            if (on && !commListIds.length && fillerLists.length) setCommListIds([fillerLists[0].id]);
           }}
           color="orange"
           label="Play commercials between shows"
-          description="Pulls clips from a Tunarr filler list and plays them in a short gap after each show — like real TV."
+          description="Pulls clips from one or more Tunarr filler lists and plays them in a short gap after each show — like real TV."
         />
 
         {commEnabled && (
@@ -635,12 +631,13 @@ function ChannelModal({
             </Text>
           ) : (
             <Group grow align="start">
-              <Select
-                label="Filler list"
+              <MultiSelect
+                label="Filler lists"
+                description="Pick as many as you like — clips from them are mixed evenly."
                 data={fillerLists.map((f) => ({ value: f.id, label: `${f.name} (${f.contentCount})` }))}
-                value={commListId}
-                onChange={setCommListId}
-                allowDeselect={false}
+                value={commListIds}
+                onChange={setCommListIds}
+                error={commListIds.length ? undefined : 'Pick a list, or commercials stay off'}
               />
               <Select
                 label="Break length"

@@ -1,6 +1,6 @@
 import {
   ActionIcon, Alert, Badge, Box, Button, Card, Center, Checkbox, Chip, Code, Collapse, Divider, Group,
-  Image, Loader, Modal, NumberInput, ScrollArea, Select, SimpleGrid, Stack,
+  Image, Loader, Modal, MultiSelect, NumberInput, ScrollArea, Select, SimpleGrid, Stack,
   Stepper, Switch, Text, TextInput, Textarea, ThemeIcon, Title, Tooltip, UnstyledButton,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
@@ -13,7 +13,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import {
-  api, streamPipeline, StreamEvent, PlexCollection, PlexLibrary, CollectionSelection,
+  api, buildCommercials, streamPipeline, StreamEvent, PlexCollection, PlexLibrary, CollectionSelection,
   LibraryFacets, CandidateSpec, CandidateKind, EntityFacet, GenreDecadeFacet, BlendFacet, ValidateResult,
   FillerList, Commercials, TvMovieGenreFacet, PlannerStateFile, ProgrammingBlock,
   FranchiseCandidate, DeployPreviewResult, ThemeFacet,
@@ -823,7 +823,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
   // Batch options applied to every channel built here (commercials + auto-update).
   const [fillerLists, setFillerLists] = useState<FillerList[]>([]);
   const [commEnabled, setCommEnabled] = useState(false);
-  const [commListId, setCommListId] = useState<string | null>(null);
+  const [commListIds, setCommListIds] = useState<string[]>([]);
   const [commPad, setCommPad] = useState('5');
   const [autoUpdate, setAutoUpdate] = useState(false);
 
@@ -1026,7 +1026,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
           curate = s.curate;
           setAiExtras(s.aiExtras);
           setCommEnabled(s.commEnabled);
-          setCommListId(s.commListId);
+          setCommListIds(s.commListIds ?? (s.commListId ? [s.commListId] : []));
           setCommPad(s.commPad || '5');
           setAutoUpdate(s.autoUpdate);
         } else {
@@ -1082,7 +1082,8 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
       curate: planner.curate,
       aiExtras,
       commEnabled,
-      commListId,
+      commListId: commListIds[0] ?? null,
+      commListIds,
       commPad,
       autoUpdate,
     };
@@ -1092,7 +1093,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planner.activeGenres, planner.activeDecades, planner.selected, planner.curate,
-      aiExtras, commEnabled, commListId, commPad, autoUpdate]);
+      aiExtras, commEnabled, commListIds, commPad, autoUpdate]);
 
   /** Get the currently-checked member titles for a franchise (defaults to all). */
   function franchiseCheckedTitles(fr: FranchiseCandidate): string[] {
@@ -1183,8 +1184,8 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
   async function build() {
     setBuilding(true);
     try {
-      const commercials: Commercials | undefined = commEnabled && commListId
-        ? { filler_list_id: commListId, filler_list_name: fillerLists.find(f => f.id === commListId)?.name, pad_minutes: Number(commPad) }
+      const commercials: Commercials | undefined = commEnabled
+        ? buildCommercials(commListIds, fillerLists, Number(commPad))
         : undefined;
       const r = await api.composeChannels(exactSpecs, setup.start, { live: autoUpdate, commercials });
       if (r.skipped.length) notifications.show({ message: `${r.skipped.length} candidate(s) skipped — no matching titles`, color: 'yellow' });
@@ -1199,7 +1200,8 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
         curate: planner.curate,
         aiExtras,
         commEnabled,
-        commListId,
+        commListId: commListIds[0] ?? null,
+        commListIds,
         commPad,
         autoUpdate,
       };
@@ -1220,7 +1222,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
     patch({ selected: {}, curate: {}, activeGenres: defaultGenres, activeDecades: defaultDecades });
     setAiExtras(false);
     setCommEnabled(false);
-    setCommListId(null);
+    setCommListIds([]);
     setCommPad('5');
     setAutoUpdate(false);
     api.deletePlannerState().catch(() => {});
@@ -1247,9 +1249,9 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
       {/* Commercials — between-show filler, applied to every channel built here. */}
       <Card withBorder p="sm" style={{ borderColor: commEnabled ? 'var(--mantine-color-orange-6)' : undefined }}>
         <Switch color="orange" checked={commEnabled}
-          onChange={(e) => { const v = e.currentTarget.checked; setCommEnabled(v); if (v && !commListId && fillerLists.length) setCommListId(fillerLists[0].id); }}
+          onChange={(e) => { const v = e.currentTarget.checked; setCommEnabled(v); if (v && !commListIds.length && fillerLists.length) setCommListIds([fillerLists[0].id]); }}
           label={<Group gap={6}><IconDeviceTv size={15} /><Text size="sm" fw={600}>📺 Add commercials</Text></Group>}
-          description="Plays clips from a Tunarr filler list in a short gap between shows — like real TV. Applies to every channel you build here; tune any of them later on the Channels page." />
+          description="Plays clips from one or more Tunarr filler lists in a short gap between shows — like real TV. Applies to every channel you build here; tune any of them later on the Channels page." />
         {commEnabled && (
           fillerLists.length === 0 ? (
             <Text size="xs" c="yellow.4" mt="xs">
@@ -1257,9 +1259,11 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
             </Text>
           ) : (
             <Group grow mt="xs" align="start">
-              <Select label="Filler list" size="xs"
+              <MultiSelect label="Filler lists" size="xs"
+                description="Pick as many as you like — clips from them are mixed evenly."
                 data={fillerLists.map(fl => ({ value: fl.id, label: `${fl.name} (${fl.contentCount})` }))}
-                value={commListId} onChange={setCommListId} allowDeselect={false} />
+                value={commListIds} onChange={setCommListIds}
+                error={commListIds.length ? undefined : 'Pick a list, or commercials stay off'} />
               <Select label="Break length" size="xs"
                 data={[{ value: '5', label: 'Short (~3 min)' }, { value: '30', label: 'Long (~8 min)' }]}
                 value={commPad} onChange={(v) => setCommPad(v || '5')} allowDeselect={false} />
