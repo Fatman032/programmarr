@@ -167,7 +167,7 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
         return summary
 
     try:
-        movie_map, show_map = channel_engine.build_library_index(tunarr_url)
+        movie_map, show_map, id_index = channel_engine.build_library_index_with_ids(tunarr_url)
     except channel_engine.ChannelEngineError as e:
         summary["error"] = f"library index failed: {e}"
         return summary
@@ -194,7 +194,7 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
             ch.get("content", []), movie_map, show_map,
             plex_url=plex_url, plex_token=plex_token,
             plex_sections=plex_sections, collection_cache=collection_cache,
-            franchise_index=franchise_index,
+            franchise_index=franchise_index, id_index=id_index,
         )
         fresh_ids = _program_ids(resolved)
 
