@@ -734,7 +734,7 @@ function ChannelRow({
 }: {
   channel: TunarrChannel;
   sync?: ChannelSyncState;
-  notice?: ChannelNotice;
+  notice?: ChannelNotice | ChannelReview;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -861,6 +861,9 @@ export default function Channels() {
   const [managed, setManaged] = useState<Set<number>>(new Set());
   const [sync, setSync] = useState<Record<string, ChannelSyncState>>({});
   const [notices, setNotices] = useState<Record<string, ChannelNotice>>({});
+  // A live check of every channel: what the saved notices know is only what the last Apply or
+  // auto-update saw, so a channel nobody has applied since would otherwise show nothing here.
+  const [reviews, setReviews] = useState<Record<string, ChannelReview>>({});
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Channel | null>(null);
   const [opened, { open, close }] = useDisclosure(false);
@@ -875,6 +878,7 @@ export default function Channels() {
     setLoading(false);
     api.getRecipesStatus().then((s) => setSync(s.channels || {})).catch(() => {});
     api.getChannelNotices().then(setNotices).catch(() => {});
+    api.getChannelReviews().then(setReviews).catch(() => {});
   }
 
   useEffect(() => { load(); }, []);
@@ -942,7 +946,7 @@ export default function Channels() {
                 key={ch.number}
                 channel={ch}
                 sync={sync[String(ch.number)]}
-                notice={notices[String(ch.number)]}
+                notice={reviews[String(ch.number)] ?? notices[String(ch.number)]}
                 onEdit={() => edit(ch)}
                 onDelete={() => load()}
               />

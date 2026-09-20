@@ -295,6 +295,47 @@ async def library_lookup(title: str, kind: str = "", refresh: bool = False):
     return {"matches": matches}
 
 
+def _clean_review():
+    return {"missing_count": 0, "missing": [], "healed_count": 0, "ambiguous_count": 0, "ambiguous": []}
+
+
+def _review_setup():
+    """The connection details a review needs, or a clear error."""
+    cfg = _load_config()
+    tunarr_url = cfg.get("tunarr_url", "").rstrip("/")
+    if not tunarr_url:
+        raise HTTPException(400, "Tunarr not configured")
+    channel_engine.set_tunarr_auth_from_config(cfg)
+    return tunarr_url, cfg.get("plex_url", "").rstrip("/"), cfg.get("plex_token", "")
+
+
+def _review_channels(channels, tunarr_url, plex_url, plex_token, refresh=False, isolate=False):
+    """{channel number: review} for these channels — each resolved against the library
+    exactly as a deploy would, but writing nothing and never touching Tunarr's channels.
+    One cached library scan and one Plex collection lookup serve them all. With `isolate`, a
+    channel that can't be checked is left out instead of failing the rest."""
+    movie_map, show_map, id_index = _cached_library(tunarr_url, refresh)
+    uses_collection = any(isinstance(it, dict) and "collection" in it
+                          for ch in channels for it in ch.get("content", []))
+    plex_sections = (channel_engine.get_plex_sections(plex_url, plex_token)
+                     if uses_collection and plex_url and plex_token else [])
+    franchise_index = channel_engine.load_franchise_index(DATA_DIR)
+    collection_cache, reviews = {}, {}
+    for ch in channels:
+        report = {}
+        try:
+            channel_engine.resolve_content(
+                ch.get("content", []), movie_map, show_map, plex_url=plex_url, plex_token=plex_token,
+                plex_sections=plex_sections, collection_cache=collection_cache,
+                franchise_index=franchise_index, id_index=id_index, report=report)
+        except Exception:
+            if not isolate:
+                raise
+            continue  # a check is information: one odd channel must not blank the others
+        reviews[ch.get("number")] = notices.summarize(report) or _clean_review()
+    return reviews
+
+
 @router.get("/channels/{number}/review")
 async def channel_review(number: int, refresh: bool = False):
     """Check ONE channel against the library right now, without deploying anything: what
@@ -304,33 +345,28 @@ async def channel_review(number: int, refresh: bool = False):
     ch = next((c for c in load().get("channels", []) if c.get("number") == number), None)
     if ch is None:
         raise HTTPException(404, f"Channel {number} not in channels.json")
-    cfg = _load_config()
-    tunarr_url = cfg.get("tunarr_url", "").rstrip("/")
-    if not tunarr_url:
-        raise HTTPException(400, "Tunarr not configured")
-    channel_engine.set_tunarr_auth_from_config(cfg)
-    plex_url, plex_token = cfg.get("plex_url", "").rstrip("/"), cfg.get("plex_token", "")
-
-    def _check():
-        movie_map, show_map, id_index = _cached_library(tunarr_url, refresh)
-        content = ch.get("content", [])
-        plex_sections = []
-        if plex_url and plex_token and any(isinstance(it, dict) and "collection" in it for it in content):
-            plex_sections = channel_engine.get_plex_sections(plex_url, plex_token)
-        report = {}
-        channel_engine.resolve_content(
-            content, movie_map, show_map, plex_url=plex_url, plex_token=plex_token,
-            plex_sections=plex_sections, collection_cache={},
-            franchise_index=channel_engine.load_franchise_index(DATA_DIR),
-            id_index=id_index, report=report)
-        return notices.summarize(report)
-
+    tunarr_url, plex_url, plex_token = _review_setup()
     try:
-        result = await asyncio.to_thread(_check)
+        reviews = await asyncio.to_thread(_review_channels, [ch], tunarr_url, plex_url, plex_token, refresh)
     except channel_engine.ChannelEngineError as e:
         raise HTTPException(502, str(e))
-    return result or {"missing_count": 0, "missing": [], "healed_count": 0,
-                      "ambiguous_count": 0, "ambiguous": []}
+    return reviews[number]
+
+
+@router.get("/channel-reviews")
+async def channel_reviews(refresh: bool = False):
+    """The same live check for EVERY channel, so the channel list can flag the ones that need
+    a look without anyone opening them first (the saved notices only know what the last
+    Apply or auto-update saw)."""
+    channels = load().get("channels", [])
+    if not channels:
+        return {}
+    tunarr_url, plex_url, plex_token = _review_setup()
+    try:
+        return await asyncio.to_thread(
+            _review_channels, channels, tunarr_url, plex_url, plex_token, refresh, True)
+    except channel_engine.ChannelEngineError as e:
+        raise HTTPException(502, str(e))
 
 
 @router.get("/library/titles")
