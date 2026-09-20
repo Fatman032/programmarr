@@ -209,3 +209,79 @@ def test_apply_records_the_ambiguous_titles_in_the_notice_too(server, monkeypatc
     result = asyncio.run(channels_router.apply_channel(1))
     assert result["notice"]["ambiguous_count"] == 1
     assert notices.load(tmp_path)["1"]["ambiguous"][0]["label"] == "Aladdin"
+
+
+# ── GET /channel-reviews — the channel LIST flags them too ───────────────────────────
+# The row badge used to come only from the notice saved at the last Apply/auto-update, so a
+# channel nobody had applied since (Heroes) showed nothing on the list even though opening it
+# listed three ambiguous titles. The list now runs the same live check for every channel.
+
+def _reviews(**kw):
+    kw.setdefault("refresh", False)
+    return asyncio.run(channels_router.channel_reviews(**kw))
+
+
+def _two_channels(tmp_path, second=("2 Guns", "Cheers")):
+    (tmp_path / "channels.json").write_text(json.dumps({"channels": [
+        {"number": 1, "name": "Needs a look", "content": ["Aladdin", "2 Guns", "Not A Real Movie"]},
+        {"number": 4, "name": "Clean", "content": list(second)}]}))
+
+
+def test_a_channel_nobody_has_applied_is_still_flagged_on_the_list(server):
+    tmp_path, _ = server
+    _two_channels(tmp_path)
+    assert not (tmp_path / notices.FILE).exists()  # no saved notice anywhere — the Heroes situation
+    r = _reviews()
+    assert r[1]["ambiguous_count"] == 1 and r[1]["ambiguous"][0]["label"] == "Aladdin"
+    assert r[1]["missing_count"] == 1 and r[1]["missing"][0]["label"] == "Not A Real Movie"
+
+
+def test_a_clean_channel_reviews_as_all_zeros_on_the_list(server):
+    tmp_path, _ = server
+    _two_channels(tmp_path)
+    assert _reviews()[4] == {"missing_count": 0, "missing": [], "healed_count": 0,
+                             "ambiguous_count": 0, "ambiguous": []}
+
+
+def test_every_channel_is_reviewed_from_one_library_scan_and_nothing_is_written(server):
+    tmp_path, calls = server
+    _two_channels(tmp_path)
+    before = (tmp_path / "channels.json").read_text()
+    assert set(_reviews()) == {1, 4}
+    assert calls["builds"] == 1 and calls["deploys"] == 0
+    assert not (tmp_path / notices.FILE).exists()
+    assert (tmp_path / "channels.json").read_text() == before
+
+
+def test_one_channel_that_cannot_be_checked_does_not_blank_the_rest(server, monkeypatch):
+    tmp_path, _ = server
+    _two_channels(tmp_path, second=("BOOM",))
+    real = channel_engine.resolve_content
+    def flaky(content, *a, **k):
+        if "BOOM" in content:
+            raise RuntimeError("an odd entry")
+        return real(content, *a, **k)
+    monkeypatch.setattr(channel_engine, "resolve_content", flaky)
+    r = _reviews()
+    assert set(r) == {1} and r[1]["ambiguous_count"] == 1
+
+
+def test_no_channels_is_an_empty_answer_not_an_error(server):
+    tmp_path, _ = server
+    (tmp_path / "channels.json").write_text(json.dumps({"channels": []}))
+    assert _reviews() == {}
+
+
+def test_the_list_check_needs_tunarr_configured(server):
+    tmp_path, _ = server
+    _two_channels(tmp_path)
+    (tmp_path / "config.json").write_text("{}")
+    with pytest.raises(HTTPException) as e:
+        _reviews()
+    assert e.value.status_code == 400
+
+
+def test_the_list_and_the_editor_agree(server):
+    tmp_path, _ = server
+    _two_channels(tmp_path)
+    assert _reviews()[1] == {k: v for k, v in _review(1).items()}

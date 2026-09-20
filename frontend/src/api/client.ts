@@ -134,6 +134,8 @@ export const api = {
   getChannelNotices: () => req<Record<string, ChannelNotice>>('/channel-notices'),
   // Check one channel against the library right now (skipped items, backup-number finds, ambiguous titles).
   getChannelReview: (n: number) => req<ChannelReview>(`/channels/${n}/review`),
+  // The same live check for every channel, so the list can flag the ones that need a look.
+  getChannelReviews: () => req<Record<string, ChannelReview>>('/channel-reviews'),
 
   // ── Planner state ──
   getPlannerState: () => req<PlannerStateFile>('/pipeline/planner-state'),
