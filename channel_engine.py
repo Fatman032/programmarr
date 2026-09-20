@@ -452,6 +452,27 @@ def build_library_index_with_ids(tunarr_url):
     return movie_map, show_map, _build_id_index(movie_items, show_items)
 
 
+def find_by_title(title, id_index, kind=None):
+    """Every distinct movie/show whose title is exactly `title` (case-insensitive) —
+    for the Add box, which has to ask "which one?" when there is more than one.
+
+    Two library copies of the same thing (an HD and a 4K library) count as one; the
+    playable copy is returned. Movies first, then shows, oldest first."""
+    want = (title or "").lower().strip()
+    if not want:
+        return []
+    found = []
+    for k in ((kind,) if kind else ("movie", "show")):
+        groups = {}
+        for item in id_index["all"].get(k, []):
+            if item["title"].lower().strip() == want:
+                identity = item["ids"].get("tmdb") or item["ids"].get("tunarr") or id(item)
+                groups.setdefault(identity, []).append(item)
+        picked = [_best_copy(items) for items in groups.values()]
+        found += sorted(picked, key=lambda it: (it.get("year") or 0, it["title"]))
+    return found
+
+
 def resolve_by_ids(kind, ids, title, year, id_index):
     """Find the exact movie/show a saved channel entry means — without guessing.
 
@@ -683,6 +704,11 @@ def get_plex_sections(plex_url, token):
 _PLEX_KIND = {"movie": "movie", "show": "show"}
 
 
+class _Resolved(dict):
+    """An item resolve_content has already matched (a saved entry that carries ids),
+    waiting in the ordered list so it keeps its place among the other entries."""
+
+
 def resolve_collection_members(plex_url, token, name, sections, cache):
     """The members of a named Plex collection (cached), as dicts:
     {"title", "kind" ("movie" / "show" / None for anything else), "plex_id", "year"}.
@@ -765,6 +791,11 @@ def resolve_content(content_list, movie_map, show_map,
     - A plain title string — matched against the Tunarr library index by exact title.
     - A {"movie": "Title"} or {"show": "Title"} ref — exact title, restricted to that
       media type (disambiguates a movie and a show that share a title).
+    - The same ref with saved numbers — {"movie": "Aladdin", "year": 2019, "ids":
+      {"tmdb": .., "plex": .., "tunarr": ..}} — finds that exact item by its numbers
+      through `id_index` (see resolve_by_ids), so two things sharing a title can't be
+      mixed up. A stale number heals from a spare; if nothing fits it is reported as
+      missing and never guessed. Without `id_index` the title and type are used.
     - A {"collection": "Name"} ref — expanded to its members via Plex. Each member is
       matched by Plex's own id (and movie/show label) through `id_index`, not by title,
       so a collection's "Wonder Woman" the movie can't turn into the show.
@@ -788,7 +819,18 @@ def resolve_content(content_list, movie_map, show_map,
     for entry in content_list:
         if isinstance(entry, dict) and ("movie" in entry or "show" in entry):
             kind = "movie" if "movie" in entry else "show"
-            expanded_titles.append((entry[kind], kind))  # resolved in order below
+            if entry.get("ids") and id_index is not None:
+                item, status, _ids = resolve_by_ids(kind, entry["ids"], entry[kind], entry.get("year"), id_index)
+                if item is not None:
+                    expanded_titles.append(_Resolved(item))  # keeps its place in the order
+                    if status == "healed":
+                        print(f"    Note: '{entry[kind]}' was found again through a backup number")
+                else:
+                    why = "matches more than one item" if status == "ambiguous" else "was not found"
+                    print(f"    WARNING: '{entry[kind]}' {why} (by its saved numbers, or by title + year)")
+                    missing.append(entry[kind])
+            else:
+                expanded_titles.append((entry[kind], kind))  # resolved in order below
         elif isinstance(entry, dict) and "collection" in entry:
             col_name = entry["collection"]
             col_members = resolve_collection_members(plex_url, plex_token, col_name, plex_sections, collection_cache)
@@ -828,6 +870,9 @@ def resolve_content(content_list, movie_map, show_map,
 
     resolved = []
     for entry in expanded_titles:
+        if isinstance(entry, _Resolved):
+            resolved.append(dict(entry))
+            continue
         if isinstance(entry, dict):  # a Plex collection member
             title = entry["title"]
             item = _resolve_collection_member(entry, movie_map, show_map, id_index)
