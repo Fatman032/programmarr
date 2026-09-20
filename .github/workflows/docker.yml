@@ -2,7 +2,7 @@ name: Build and push Docker image
 
 on:
   push:
-    branches: [master]      # build-check only — publishes NOTHING (see push: below)
+    branches: [master, id-first-keys]   # master: build-check only. id-first-keys: FORK ONLY — publishes this branch's image
   release:
     types: [published]      # the ONLY event that publishes :latest + version tags
 
@@ -20,7 +20,7 @@ jobs:
 
       # Login only needed when we actually push (release). Master build-check skips it.
       - name: Log in to GHCR
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.ref == 'refs/heads/id-first-keys'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -31,12 +31,13 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/alpinearchitecture/programmarr
+          images: ghcr.io/fatman032/programmarr
           tags: |
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
             type=semver,pattern={{version}}
             type=semver,pattern=v{{major}}.{{minor}}
-            type=sha,prefix=sha-,format=short,enable=${{ github.event_name == 'release' }}
+            type=ref,event=branch,enable=${{ github.ref == 'refs/heads/id-first-keys' }}
+            type=sha,prefix=sha-,format=short,enable=${{ github.event_name == 'release' || github.ref == 'refs/heads/id-first-keys' }}
 
       # push: true ONLY on a release. On a master push this is a pure build-check —
       # it proves the image compiles but pushes nothing to GHCR, so no user ever pulls it.
@@ -44,6 +45,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'release' }}
+          push: ${{ github.event_name == 'release' || github.ref == 'refs/heads/id-first-keys' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
