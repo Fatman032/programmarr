@@ -20,7 +20,7 @@
 > - **Live rules.** A channel can follow a genre, studio, director, actor or decade, asked of Plex again on every refresh, so a Live channel gains new matches on its own.
 > - **Several commercial filler lists per channel,** and they now actually reach Tunarr when you Apply.
 >
-> Images: `ghcr.io/fatman032/programmarr:latest` is the latest release; every build is also tagged `sha-<short commit>` (pin one of those if you want a version that never moves).
+> Images: `ghcr.io/fatman032/programmarr:latest` is the latest release; every build is also tagged `sha-<short commit>` (pin one of those if you want a version that never moves). A **pre-release** (beta) is published on GitHub as a pre-release and tagged `:beta`; `:latest` only ever points at a normal release.
 
 Programmarr is a self-hosted web app that turns your Plex library into a **curated lineup of themed virtual TV channels** in Tunarr — with a web UI that feels like Sonarr or Radarr.
 

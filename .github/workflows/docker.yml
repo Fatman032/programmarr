@@ -32,10 +32,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/fatman032/programmarr
+          # :latest and the short v1.1 tag are for normal releases only; a pre-release (beta) gets :beta
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+            type=raw,value=beta,enable=${{ github.event_name == 'release' && github.event.release.prerelease == true }}
             type=semver,pattern={{version}}
-            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}.{{minor}},enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
             type=ref,event=branch,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=sha-,format=short,enable=${{ github.event_name == 'release' || github.ref == 'refs/heads/main' }}
 
