@@ -4,6 +4,57 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0] — 2026-10-03 (my build)
+
+Based on upstream v0.8.1. Everything in v0.8.1 is still here.
+
+### Fixed
+
+- **Two things with the same title no longer get mixed up.** Every library in Tunarr
+  (including "Other Videos") is now indexed by unique id (TMDB number first, then Plex id,
+  then Tunarr id), never merged by title. Remakes (Aladdin 1992 / 2019), the Office US / UK
+  problem, and same-named movies and shows stay separate.
+- **Collections match by Plex id.** A movie in a `{collection: ...}` could turn into a
+  same-titled TV show; now it can't.
+- **Home videos in "Other Videos" libraries are found** (they were invisible before).
+- **A skipped item is no longer silent.** A title that can't be found used to vanish from
+  its channel with no message. Now it is reported with the reason.
+- **Commercials now actually reach Tunarr.** A filler list was only attached when a channel
+  was first created, so a list chosen later in the editor was saved but never sent, and the
+  break had nothing to play. Apply and the live auto-update now attach the lists.
+
+### Added
+
+- **Pinned entries.** A channel entry can carry the item's own numbers, e.g.
+  `{"movie": "Aladdin", "year": 2019, "ids": {"tmdb": "...", "plex": "...", "tunarr": "..."}}`.
+  If the main number goes stale, the item is found through a backup number and refreshed
+  (Save and Apply writes the new numbers back; the auto-update only reports it). It never guesses.
+- **The Add box pins the exact item** and shows a picker when several match.
+- **Ambiguous titles are flagged** in the channel editor, with `[year] [year] [Both]` buttons.
+  Nothing changes until you Save and Apply.
+- **Notices:** after Apply, a channel row shows "⚠ N skipped" or "N to review"; the editor
+  lists each item and why. The list is checked live, so it also covers channels nobody applied.
+- **Several commercial filler lists per channel** (Channels editor and Planner), mixed evenly.
+  Tuned weights in Tunarr are kept.
+
+### Upgrade notes
+
+- Existing channels keep working untouched. Back up `channels.json` before your first Save and Apply.
+- Older Programmarr versions can still read the new entries (extra fields are ignored).
+- 506 tests (368 upstream + 138 new).
+
+### Known limits
+
+- Live channels built from a studio, director, actor or genre pick still don't pick up newly
+  added titles (see upstream #41).
+- Plex only. No Jellyfin or Emby yet (see upstream #36).
+
+### Build
+
+- Pushing to `id-first-keys` builds an image at `ghcr.io/fatman032/programmarr`, tagged
+  `sha-<short>`, and runs a TypeScript check. To roll back, use an older tag.
+- Built with Claude Code, checked on a real Plex + Tunarr library.
+
 ## [0.8.1] — 2026-09-10
 
 ### Fixed
