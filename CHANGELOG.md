@@ -4,6 +4,32 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.1] — 2026-10-04 (my build)
+
+### Fixed
+
+- **A live channel is no longer rebuilt on every check.** Tunarr plays a channel as one fixed list
+  of about 31 days, so a big channel's list holds only the titles that fit (a 605-movie channel
+  holds ~365). The auto-update decided "did anything change?" by comparing everything the channel
+  resolves to against that smaller list, which are never equal, so every check "added" a couple of
+  hundred movies and rebuilt the channel with a new random pick, restarting what was playing. It
+  now compares against what it applied last time (kept in `recipe_applied.json`), so an unchanged
+  channel is left alone however big it is.
+- **Big channels still rotate through all their titles.** A channel whose titles didn't all fit gets a
+  fresh pick when fewer than 3 days are left on its list. Each rebuild also moves the channel's start
+  time to now, so the new list gets a full 31 days (before, posting a new list kept the old start
+  time, so the "31 days" kept ending 31 days after the channel was first built, then looped).
+- **A small channel whose titles all fit is left to loop,** instead of being rebuilt.
+- Manual Save and Apply, and the Planner's edit deploy, also start the schedule from now and record
+  what they applied, so the next automatic check doesn't mistake it for a change.
+- The log and the Dashboard say why a channel was rebuilt when nothing in it changed ("schedule
+  nearly used up, picking a fresh set").
+
+### Notes
+
+- The first automatic check after upgrading rebuilds each big channel once, to learn its baseline.
+  Restarting Programmarr runs a check; after this release that no longer reshuffles unchanged channels.
+
 ## [1.1.0] — 2026-10-04 (my build)
 
 Based on upstream v0.8.1, on top of my v1.0.
