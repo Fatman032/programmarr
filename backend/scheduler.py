@@ -54,6 +54,11 @@ _state: dict = {
 }
 
 STATE_FILE = "recipe_state.json"  # cosmetic per-channel sync metadata (NOT correctness state)
+APPLIED_FILE = "recipe_applied.json"  # {channel number: program ids as last applied} — what "changed?" is measured against
+# Tunarr plays a channel as one fixed list of about 31 days. When fewer than this is left on
+# it, a channel whose titles didn't all fit gets a fresh pick (a big channel would otherwise
+# loop the same subset forever and never air the rest).
+NEAR_END_MS = 3 * 24 * 60 * 60 * 1000
 
 DEFAULT_INTERVAL_HOURS = 12
 
@@ -105,6 +110,62 @@ def _save_state(state: dict) -> None:
         tmp.replace(DATA_DIR / STATE_FILE)  # atomic swap — no torn reads
     except Exception:
         pass  # cosmetic state must never break a cycle
+
+
+def _load_applied(data_dir=None) -> dict:
+    try:
+        with open(Path(data_dir or DATA_DIR) / APPLIED_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_applied(updates: dict, data_dir=None) -> None:
+    """Merge `updates` ({number: ids}) into the file. Re-read first, so a manual Apply that
+    landed while a cycle was running isn't overwritten by the cycle's older copy."""
+    try:
+        folder = Path(data_dir or DATA_DIR)
+        current = _load_applied(folder)
+        current.update({str(k): sorted(v) for k, v in updates.items()})
+        tmp = folder / (APPLIED_FILE + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump(current, f)
+        tmp.replace(folder / APPLIED_FILE)  # atomic swap — no torn reads
+    except Exception:
+        pass  # worst case the next check falls back to comparing with what Tunarr holds
+
+
+def record_applied(data_dir, number, ids) -> None:
+    """Remember that this channel was just applied with these program ids (the manual Apply
+    and the Planner's edit deploy use it too, so the next automatic check doesn't mistake what
+    they just applied for a change)."""
+    _write_applied({number: ids}, data_dir)
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _needs_update(fresh_ids: set, cur_ids: set, baseline, tch: dict, now_ms: int):
+    """Should this live channel be re-posted to Tunarr? Returns (needs, why).
+
+    `fresh_ids` is everything the channel resolves to now; `cur_ids` is what Tunarr's channel
+    holds, which for a big channel is only the subset that fit its ~31-day schedule — so the two
+    are never equal there, and comparing them alone rebuilt big channels (with a new random
+    pick) on every check. `baseline` is what we last applied; the content has changed only if
+    the fresh list differs from that.
+    """
+    if not cur_ids:
+        return (True, "the channel is empty in Tunarr") if fresh_ids else (False, "")
+    reference = baseline if baseline is not None else cur_ids
+    if fresh_ids != reference:
+        return True, "content changed"
+    if fresh_ids - cur_ids:  # some titles didn't fit the schedule: rotate them in near its end
+        start, duration = tch.get("startTime"), tch.get("duration")
+        if start and duration and start + duration - now_ms < NEAR_END_MS:
+            return True, "schedule nearly used up, picking a fresh set"
+    return False, ""
 
 
 # ── Diff helpers ───────────────────────────────────────────────────────────────
@@ -174,6 +235,9 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
         return summary
 
     id_label = _id_label_map(movie_map, show_map)
+    applied = _load_applied()
+    applied_updates = {}
+    now_ms = _now_ms()
 
     # Plex section lookup only if a live channel uses collection refs
     plex_sections, collection_cache = [], {}
@@ -225,10 +289,16 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
             summary["skipped"].append({"number": number, "name": name, "reason": "could not read programming"})
             continue
 
-        if fresh_ids == cur_ids:
+        stored = applied.get(str(number))
+        baseline = set(stored) if isinstance(stored, list) else None
+        needs, why = _needs_update(fresh_ids, cur_ids, baseline, tch, now_ms)
+        if not needs:
+            if apply and baseline is None and fresh_ids and fresh_ids == cur_ids:
+                applied_updates[number] = fresh_ids  # already in step: remember it as the baseline
             continue  # no change — cheap no-op, no guide churn
 
-        added, removed = fresh_ids - cur_ids, cur_ids - fresh_ids
+        ref = baseline if baseline is not None else cur_ids
+        added, removed = fresh_ids - ref, ref - fresh_ids
         change = {
             "number": number,
             "name": name,
@@ -236,6 +306,7 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
             "added_count": len(added),
             "removed_count": len(removed),
             "applied": False,
+            "note": "" if why == "content changed" else why,
         }
         if apply:
             if not fresh_ids:
@@ -248,8 +319,9 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
                 channel_engine.update_channel_in_place(
                     tunarr_url, number, ch.get("shuffle", "shuffle"), resolved,
                     pad_ms=pad_ms, expected_name=name, playback=ch.get("playback"),
-                    filler_list_ids=filler_ids)
+                    filler_list_ids=filler_ids, restart=True)
                 change["applied"] = True
+                applied_updates[number] = fresh_ids
             except channel_engine.ChannelEngineError as e:
                 summary["skipped"].append({"number": number, "name": name, "reason": str(e)})
                 continue
@@ -257,6 +329,8 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
 
     summary["changed"] = len(summary["changes"])
     _write_log(summary)
+    if apply and applied_updates:
+        _write_applied(applied_updates)
 
     # Record cosmetic per-channel sync metadata (apply cycles only — a dry run
     # isn't a real "sync"). Carries forward prior change info for unchanged channels.
@@ -270,7 +344,7 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
             c = changed_by_num.get(ch.get("number"))
             if c:
                 entry["changed_at"] = summary["time"]
-                entry["change_summary"] = (
+                entry["change_summary"] = c["note"] or (
                     f"+{c['added_count']}" + (f" −{c['removed_count']}" if c["removed_count"] else "")
                 )
             state[num] = entry
@@ -294,8 +368,9 @@ def _write_log(summary: dict) -> None:
             for c in summary["changes"]:
                 tag = "applied" if c["applied"] else "would change"
                 added = (": +" + ", ".join(c["added"])) if c["added"] else ""
+                note = f" ({c['note']})" if c.get("note") else ""
                 f.write(f"    #{c['number']} {c['name']} [{tag}] "
-                        f"+{c['added_count']} -{c['removed_count']}{added}\n")
+                        f"+{c['added_count']} -{c['removed_count']}{note}{added}\n")
             for s in summary["skipped"]:
                 f.write(f"    skip #{s['number']} {s['name']}: {s['reason']}\n")
     except Exception:

@@ -2559,7 +2559,8 @@ async def run_surgical_deploy():
                     channel_engine.update_channel_in_place(
                         tunarr_url, n, ch.get("shuffle", "shuffle"), resolved, pad_ms=pad_ms,
                         expected_name=ch.get("name"), playback=ch.get("playback"),
-                        filler_list_ids=filler_ids)
+                        filler_list_ids=filler_ids, restart=True)
+                    scheduler.record_applied(DATA_DIR, n, scheduler._program_ids(resolved))
                     return missing
 
                 try:

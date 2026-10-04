@@ -14,6 +14,7 @@ No dependencies beyond the Python standard library.
 import base64
 import json
 import os
+import time
 import re
 import uuid
 import urllib.error
@@ -1495,8 +1496,27 @@ def sync_channel_fillers(tunarr_url, channel_id, list_ids):
     return True
 
 
+def restart_channel_schedule(tunarr_url, channel_id, now_ms=None):
+    """Start the channel's schedule from now.
+
+    Tunarr plays a channel as ONE fixed list (about 31 days long) measured from the channel's
+    start time. Posting new programming swaps the list but leaves the start time where it was,
+    so the new list's 31 days still end 31 days after the channel was first built — and then
+    it loops. Moving the start time to now gives the new list a full window. Raises
+    ChannelEngineError when Tunarr can't be read or refuses the change.
+    """
+    full = api(tunarr_url, "GET", f"/api/channels/{channel_id}")
+    if not isinstance(full, dict) or not full.get("id"):
+        raise ChannelEngineError("could not read the channel from Tunarr")
+    updated = dict(full)
+    updated["startTime"] = int(now_ms if now_ms is not None else time.time() * 1000)
+    if api(tunarr_url, "PUT", f"/api/channels/{channel_id}", body=updated, timeout=30) is None:
+        raise ChannelEngineError("Tunarr did not accept the new start time")
+    return updated["startTime"]
+
+
 def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, expected_name=None, playback=None,
-                            filler_list_ids=None):
+                            filler_list_ids=None, restart=False):
     """Patch an existing channel's programming in place — never delete/recreate.
 
     Looks the channel up by number (preserving its Tunarr id and Plex DVR mapping),
@@ -1509,7 +1529,8 @@ def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, exp
     filler_list_ids are the lists that fill those gaps: they are attached to the Tunarr
     channel here too (see sync_channel_fillers), so a list picked in the editor takes
     effect on Apply instead of only being remembered. None/empty leaves the channel's
-    attached lists alone. Similarly, playback
+    attached lists alone. restart=True also moves the channel's start time to now (see
+    restart_channel_schedule) so the new schedule gets a full window. Similarly, playback
     (the per-channel structure dict) must be re-applied on live updates for the same
     reason as pad_ms — omitting it would silently revert an interleaved or timeline
     channel to the default shuffle behavior after each cycle.
@@ -1541,4 +1562,11 @@ def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, exp
             raise ChannelEngineError(
                 f"Channel #{number}: the schedule was updated, but the commercial lists "
                 f"could not be attached ({e})")
+    if restart:
+        try:
+            restart_channel_schedule(tunarr_url, ch["id"])
+        except ChannelEngineError as e:
+            raise ChannelEngineError(
+                f"Channel #{number}: the schedule was updated, but its start time could not be "
+                f"reset ({e})")
     return result

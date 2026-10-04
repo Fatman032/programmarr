@@ -152,7 +152,9 @@ async def apply_channel(number: int):
         pad_ms, filler_ids = channel_engine.commercial_settings(ch.get("commercials"))
         channel_engine.update_channel_in_place(
             tunarr_url, number, ch.get("shuffle", "shuffle"), resolved, pad_ms=pad_ms,
-            expected_name=ch.get("name"), playback=ch.get("playback"), filler_list_ids=filler_ids)
+            expected_name=ch.get("name"), playback=ch.get("playback"), filler_list_ids=filler_ids,
+            restart=True)
+        scheduler.record_applied(DATA_DIR, number, scheduler._program_ids(resolved))
 
         # An entry whose main number went stale but was found through a spare gets its
         # current numbers written back, so the next resolve matches on the first number.
