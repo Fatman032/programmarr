@@ -4,6 +4,32 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] (my build, after v1.0)
+
+### Added
+
+- **Live rules** (upstream issue #41). A channel can now follow a genre, studio, director, actor
+  or decade instead of a frozen list of titles. Type one into the channel editor's Add box:
+  `{genre: Animation}`, `{studio: Pixar}`, `{director: John Lasseter}`, `{actor: Tom Hanks}`,
+  `{decade: 1980}`; put `tv ` first for shows (`{tv genre: Comedy}`). Every refresh asks Plex
+  for the current matches and finds each one in Tunarr by its Plex id, so a new movie in Plex
+  joins a Live channel on its own.
+- **Not in Tunarr yet is reported, not lost.** A match Plex has but Tunarr hasn't scanned in is
+  listed with the channel's notices ("N in Plex but not in Tunarr yet") and joins after Tunarr's
+  next scan.
+- **Plex trouble never shrinks a channel.** If Plex can't be read, Apply and the auto-update
+  leave the channel exactly as it is.
+- **"Remove the N fixed titles"** button in the editor, for converting an old channel: add the
+  rule, remove the frozen list, Save and Apply. Collections and rules stay.
+
+### Known limits
+
+- The Planner still saves a plain list of titles when you pick a genre/studio/etc. For now,
+  convert a channel in the editor. (A rule match uses the same top-3 cast cut as the Planner.)
+- Each refresh reads the whole Plex movie (and, for show rules, TV) listing once, shared by
+  every rule channel in that cycle.
+- Plex only.
+
 ## [1.0] — 2026-10-03 (my build)
 
 Based on upstream v0.8.1. Everything in v0.8.1 is still here.
