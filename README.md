@@ -13,6 +13,15 @@
 
 ---
 
+> **This is a fork** of [Programmarr](https://github.com/jamesmattson/programmarr), kept by [@Fatman032](https://github.com/Fatman032), with extra fixes. Everything upstream does still works. What's different (full list in [CHANGELOG.md](CHANGELOG.md)):
+>
+> - **Same-title items never get mixed up.** Every library is indexed by unique id, so remakes (two *Aladdin*s), a movie and a show with one name, and collection members all resolve to the right item. Saved entries can carry the item's ids, the Add box asks when several match, and the editor flags ambiguous plain titles with `[year] [year] [Both]` buttons.
+> - **Nothing is skipped silently.** A title that can't be found is reported with the reason, on the channel list and in the editor.
+> - **Live rules.** A channel can follow a genre, studio, director, actor or decade, asked of Plex again on every refresh, so a Live channel gains new matches on its own.
+> - **Several commercial filler lists per channel,** and they now actually reach Tunarr when you Apply.
+>
+> Images: `ghcr.io/fatman032/programmarr:latest` is the latest release; every build is also tagged `sha-<short commit>` (pin one of those if you want a version that never moves).
+
 Programmarr is a self-hosted web app that turns your Plex library into a **curated lineup of themed virtual TV channels** in Tunarr — with a web UI that feels like Sonarr or Radarr.
 
 You **compose** the lineup in a **Planner**: pick the genres, decades, studios, directors, and actors you want, check the exact channels from a live, counted list, and deploy. It's all deterministic — no AI required — with an **optional** AI layer that discovers themed channels your filters miss (Heist Films, Time Travel, Sports Underdogs) and splits broad pools by *tone* (Feel-Good vs Raunchy Comedies).
@@ -36,7 +45,7 @@ Channels can also be **self-maintaining**: mark one "live" and Programmarr re-ch
 ```yaml
 services:
   programmarr:
-    image: ghcr.io/alpinearchitecture/programmarr:latest
+    image: ghcr.io/fatman032/programmarr:latest
     container_name: programmarr
     restart: unless-stopped
     ports:
@@ -74,7 +83,7 @@ Paste this as a complete compose file in Apps → Custom App:
 ```yaml
 services:
   programmarr:
-    image: ghcr.io/alpinearchitecture/programmarr:latest
+    image: ghcr.io/fatman032/programmarr:latest
     container_name: programmarr
     restart: unless-stopped
     ports:
@@ -115,7 +124,7 @@ will only ever pull released versions — never work-in-progress.
 ```yaml
 services:
   programmarr:
-    image: ghcr.io/alpinearchitecture/programmarr:latest
+    image: ghcr.io/fatman032/programmarr:latest
     container_name: programmarr
     restart: unless-stopped
     ports:
@@ -211,6 +220,7 @@ Two everyday patterns:
 
 - **TV marathons** — a 24/7 single-show loop. New episodes land in Plex → they're on the channel by the next check.
 - **Franchises** — add a *title-contains* rule (e.g. `Bad Boys`) in the channel editor. Every matching film is pulled in, in release order, and a new sequel joins automatically when it appears. A live preview shows exactly what matches before you save, and you can exclude any false positives.
+- **Rules** — in the channel editor's Add box, choose **Genre**, **Studio**, **Director**, **Actor** or **Decade** (and Movies or TV shows), then pick the value from a list read from your Plex. Every refresh asks Plex for the current matches, so a new *Animation* movie joins an *Animation* channel on its own once Tunarr has scanned it in. If Plex can't be read, the channel is left exactly as it is. To convert an older channel, add the rule, click **Remove the N fixed titles**, then Save and Apply. (The Planner still saves a plain list of titles for now.)
 
 **Why "in place" matters:** updates reuse the existing Tunarr channel — same channel number, same internal id — so Plex's Live TV / DVR mapping is never disturbed. No deleting, no re-adding the channel in Plex. An unchanged channel is a no-op, so there's no needless guide churn.
 
@@ -223,7 +233,7 @@ It ships **off**. Turn it on in **Settings → Live Channels**, flip the **"Auto
 - **Library picker** — choose which Plex libraries to scan (Movies, 4K Movies, Kids TV, etc.) before each export; supports mixing multiple libraries of the same type
 - **Channel logo fetching** — pulls TMDB clearlogos for single-show/movie channels
 - **Plex DVR sync** — maps new channels into the Plex Live TV guide automatically
-- **Channel editor** — edit names, numbers, shuffle mode, and content lists in the browser; mark channels live and build franchise auto-match rules
+- **Channel editor** — edit names, numbers, shuffle mode, and content lists in the browser; an Add box with a type dropdown (Movie, TV Show, Collection, or a live Genre/Studio/Director/Actor/Decade rule); mark channels live and build franchise auto-match rules; see what each channel skipped and why
 - **Optional basic auth** — set a username/password if you expose the UI outside your LAN
 
 ---
@@ -286,7 +296,7 @@ the categories into whatever order you prefer. Numbering on a fresh deploy start
 
 ### Commercials
 
-Any channel can play commercials in the gaps between shows. In Tunarr, create a **filler list** of commercial/bumper clips (a [Plex "Other Videos" library](https://support.plex.tv/articles/200265256-adding-content-to-plex/) works well). Then in Programmarr, open a channel → **Commercials** → turn it on and pick that list. On the next deploy, that channel plays a short ad break between each show.
+Any channel can play commercials in the gaps between shows. In Tunarr, create a **filler list** of commercial/bumper clips (a [Plex "Other Videos" library](https://support.plex.tv/articles/200265256-adding-content-to-plex/) works well). Then in Programmarr, open a channel → **Commercials** → turn it on and pick one list or several (they're mixed evenly). Save and Apply attaches the lists in Tunarr, and the channel plays a short ad break between each show.
 
 ---
 
@@ -309,4 +319,4 @@ scripts directly (cron-friendly), and editing `config.json` by hand for advanced
 
 Built with [Claude Code](https://claude.ai/claude-code). Made possible by [Tunarr](https://github.com/chrisbenincasa/tunarr), [Plex](https://www.plex.tv/), [TMDB](https://www.themoviedb.org/), and [Kometa](https://kometa.wiki/).
 
-[⭐ Star on GitHub](https://github.com/AlpineArchitecture/programmarr) · [🐛 Report a Bug](https://github.com/AlpineArchitecture/programmarr/issues)
+[⭐ Star on GitHub](https://github.com/AlpineArchitecture/programmarr) · [🐛 Report a Bug](https://github.com/AlpineArchitecture/programmarr/issues) · [🍴 This fork](https://github.com/Fatman032/programmarr)
