@@ -77,7 +77,7 @@ Based on upstream v0.8.1. Everything in v0.8.1 is still here.
 
 ### Build
 
-- Pushing to `id-first-keys` builds an image at `ghcr.io/fatman032/programmarr`, tagged
+- Pushing to `main` builds an image at `ghcr.io/fatman032/programmarr`, tagged
   `sha-<short>`, and runs a TypeScript check. To roll back, use an older tag.
 - Built with Claude Code, checked on a real Plex + Tunarr library.
 

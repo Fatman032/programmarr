@@ -4,7 +4,7 @@ name: Frontend type-check (fork)
 # so a TypeScript mistake would ship. This runs the real check (`tsc --noEmit`).
 on:
   push:
-    branches: [id-first-keys]
+    branches: [main]
 
 permissions:
   contents: read
