@@ -246,7 +246,21 @@ export interface FranchiseRef { match: 'franchise'; name: string; order?: string
 export interface ItemNumbers { year?: number; ids?: Record<string, string> }
 export type MovieRef = { movie: string } & ItemNumbers;
 export type ShowRef = { show: string } & ItemNumbers;
-export type ContentItem = string | { collection: string } | MovieRef | ShowRef | MatchRef | FranchiseRef;
+// { rule, value }: a live rule asked of Plex on every refresh ("genre" "Animation", "studio" "Pixar",
+// "decade" "1980"…). `kind: 'show'` makes it a rule about TV shows; the default is movies.
+export interface RuleRef { rule: 'genre' | 'studio' | 'director' | 'actor' | 'decade'; value: string; kind?: 'show' }
+export type ContentItem = string | { collection: string } | MovieRef | ShowRef | MatchRef | FranchiseRef | RuleRef;
+export function isRuleRef(c: ContentItem | null | undefined): c is RuleRef {
+  return typeof c === 'object' && c !== null && 'rule' in c;
+}
+/** `{genre: Animation}`, `{studio: Pixar}`, `{tv genre: Comedy}`… as typed into the Add box. */
+export function ruleFromText(text: string): RuleRef | null {
+  const m = text.trim().match(/^\{(tv[ -])?(genre|studio|director|actor|decade):\s*(.+)\}$/i);
+  if (!m) return null;
+  const ref: RuleRef = { rule: m[2].toLowerCase() as RuleRef['rule'], value: m[3].trim() };
+  if (m[1]) ref.kind = 'show';
+  return ref;
+}
 export function isMatchRef(c: ContentItem): c is MatchRef {
   return typeof c === 'object' && c !== null && 'match' in c;
 }

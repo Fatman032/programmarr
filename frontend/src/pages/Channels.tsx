@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AmbiguousChoice, api, buildCommercials, Channel, ChannelNotice, ChannelReview, ChannelSyncState, commercialListIds, ContentItem, FillerList, FranchiseRef, isMatchRef, LibraryMatch, RecipeMatch, TunarrChannel } from '../api/client';
+import { AmbiguousChoice, api, buildCommercials, Channel, ChannelNotice, ChannelReview, ChannelSyncState, commercialListIds, ContentItem, FillerList, FranchiseRef, isCollectionRef, isMatchRef, isRuleRef, LibraryMatch, RecipeMatch, ruleFromText, TunarrChannel } from '../api/client';
 
 function syncedAgo(iso?: string): string {
   if (!iso) return 'never';
@@ -188,6 +188,7 @@ type ContentRow = { label: string; raw: ContentItem | null };
 
 function rowFromEntry(c: ContentItem): ContentRow {
   if (typeof c === 'string') return { label: c, raw: null };
+  if (isRuleRef(c)) return { label: `{${c.kind === 'show' ? 'tv ' : ''}${c.rule}: ${c.value}}`, raw: c };
   const o = c as unknown as Record<string, unknown>;
   const [k, v] = Object.entries(o)[0];
   const shownYear = o.ids && o.year ? ` (${o.year})` : '';
@@ -319,6 +320,9 @@ function ChannelModal({
   async function addItem() {
     const text = newItem.trim();
     if (!text || looking) return;
+    // A rule ({genre: Animation}, {studio: Pixar}, {decade: 1980}…) stays live too: Plex is asked again on every refresh.
+    const rule = ruleFromText(text);
+    if (rule) return pushRow(rowFromEntry(rule));
     const typed = text.match(/^\{(collection|movie|show):\s*(.+)\}$/);
     // A collection stays a live reference — never frozen into whatever it holds today.
     if (typed && typed[1] === 'collection') return pushRow({ label: text, raw: null });
@@ -340,6 +344,19 @@ function ChannelModal({
 
   function removeItem(i: number) {
     setContent((c) => c.filter((_, idx) => idx !== i));
+  }
+
+  // Once a live rule does the finding, the frozen list of titles it replaces is just in the way.
+  // Collections and rules stay; every plain title and pinned movie/show goes. Nothing is saved
+  // until Save and Apply, like every other edit here.
+  const keptWhenCleared = (r: ContentRow) => isRuleRef(r.raw) || (r.raw !== null && isCollectionRef(r.raw));
+  const hasRule = content.some((r) => isRuleRef(r.raw));
+  const fixedTitleCount = content.filter((r) => !keptWhenCleared(r)).length;
+  function removeFixedTitles() {
+    if (!window.confirm(`Remove ${fixedTitleCount} fixed titles from this channel?
+
+Live rules and collections stay. Nothing is saved until you click Save and Apply.`)) return;
+    setContent((rows) => rows.filter(keptWhenCleared));
   }
 
   async function persist() {
@@ -507,6 +524,7 @@ function ChannelModal({
               <Text size="sm" style={{ flex: 1, fontFamily: 'ui-monospace, monospace' }} truncate>
                 {row.label}
                 {isPinned(row) && <Text span c="dimmed" size="xs"> · pinned</Text>}
+                {isRuleRef(row.raw) && <Text span c="dimmed" size="xs"> · live rule, updates itself</Text>}
               </Text>
               <ActionIcon size="sm" color="red" variant="subtle" onClick={() => removeItem(i)}>
                 <IconX size={14} />
@@ -523,9 +541,15 @@ function ChannelModal({
           ))}
         </Stack>
 
+        {hasRule && fixedTitleCount > 0 && (
+          <Button size="xs" variant="light" color="red" onClick={removeFixedTitles}>
+            Remove the {fixedTitleCount} fixed titles (keep rules and collections)
+          </Button>
+        )}
+
         <Group gap="xs">
           <TextInput
-            placeholder="Add title, {movie: Title}, {show: Title} or {collection: Name}"
+            placeholder="Add title, {movie: Title}, {show: Title}, {collection: Name} or {genre: Animation}"
             value={newItem}
             onChange={(e) => setNewItem(e.currentTarget.value)}
             onKeyDown={(e) => e.key === 'Enter' && addItem()}
