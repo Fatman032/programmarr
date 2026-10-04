@@ -4,14 +4,17 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased] (my build, after v1.0)
+## [1.1.0] — 2026-10-04 (my build)
+
+Based on upstream v0.8.1, on top of my v1.0.
 
 ### Added
 
 - **Live rules** (upstream issue #41). A channel can now follow a genre, studio, director, actor
-  or decade instead of a frozen list of titles. Type one into the channel editor's Add box:
-  `{genre: Animation}`, `{studio: Pixar}`, `{director: John Lasseter}`, `{actor: Tom Hanks}`,
-  `{decade: 1980}`; put `tv ` first for shows (`{tv genre: Comedy}`). Every refresh asks Plex
+  or decade instead of a frozen list of titles. Add one from the channel editor's Add box: pick
+  the kind in the dropdown, then the value. (Typing works too: `{genre: Animation}`,
+  `{studio: Pixar}`, `{director: John Lasseter}`, `{actor: Tom Hanks}`, `{decade: 1980}`; put
+  `tv ` first for shows, e.g. `{tv genre: Comedy}`.) Every refresh asks Plex
   for the current matches and finds each one in Tunarr by its Plex id, so a new movie in Plex
   joins a Live channel on its own.
 - **An Add box with a type dropdown.** Choose Movie, TV Show, Collection, Genre, Studio, Director,
