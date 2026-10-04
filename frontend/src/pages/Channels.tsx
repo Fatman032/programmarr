@@ -1,6 +1,6 @@
 import {
   ActionIcon, Badge, Box, Button, Card, Checkbox, Divider, Group,
-  Loader, Modal, MultiSelect, NumberInput, ScrollArea, Select, Stack, Switch, Text, TextInput, Title,
+  Loader, Modal, MultiSelect, NumberInput, ScrollArea, SegmentedControl, Select, Stack, Switch, Text, TextInput, Title,
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AmbiguousChoice, api, buildCommercials, Channel, ChannelNotice, ChannelReview, ChannelSyncState, commercialListIds, ContentItem, FillerList, FranchiseRef, isCollectionRef, isMatchRef, isRuleRef, LibraryMatch, RecipeMatch, ruleFromText, TunarrChannel } from '../api/client';
+import { AmbiguousChoice, api, buildCommercials, Channel, ChannelNotice, ChannelReview, ChannelSyncState, commercialListIds, ContentItem, FillerList, FranchiseRef, isCollectionRef, isMatchRef, isRuleRef, LibraryMatch, RecipeMatch, RuleValue, ruleFromText, TunarrChannel } from '../api/client';
 
 function syncedAgo(iso?: string): string {
   if (!iso) return 'never';
@@ -40,6 +40,23 @@ function optionLabel(a: AmbiguousChoice, o: AmbiguousChoice['options'][number]):
   const year = o.year ? String(o.year) : o.title;
   return mixed ? `${o.kind} ${year}` : year;
 }
+
+// What the Add box's first dropdown offers. Left blank it adds a plain title, as before.
+const ADD_TYPES = [
+  { group: 'Fixed', items: [
+    { value: 'movie', label: 'Movie' },
+    { value: 'show', label: 'TV Show' },
+    { value: 'collection', label: 'Collection' },
+  ] },
+  { group: 'Live rule (asks Plex on every refresh)', items: [
+    { value: 'genre', label: 'Genre' },
+    { value: 'studio', label: 'Studio' },
+    { value: 'director', label: 'Director' },
+    { value: 'actor', label: 'Actor' },
+    { value: 'decade', label: 'Decade' },
+  ] },
+];
+const RULE_TYPES = ['genre', 'studio', 'director', 'actor', 'decade'];
 
 const SHUFFLE_COLOR: Record<string, string> = { ordered: 'blue', block: 'violet', shuffle: 'teal' };
 const SHUFFLE_OPTIONS = [
@@ -216,6 +233,13 @@ function ChannelModal({
   const [content, setContent] = useState<ContentRow[]>([]);
   const [newItem, setNewItem] = useState('');
   const [looking, setLooking] = useState(false);
+  // The Add box: a kind (blank = plain title), movies or TV shows for a rule, and the value.
+  const [addType, setAddType] = useState<string | null>(null);
+  const [addKind, setAddKind] = useState<'movie' | 'show'>('movie');
+  // What Plex has for the chosen rule (a pick-list). null = not loaded or Plex unreachable -> type it instead.
+  const [ruleChoices, setRuleChoices] = useState<RuleValue[] | null>(null);
+  const [choicesFailed, setChoicesFailed] = useState(false);
+  const isRuleType = !!addType && RULE_TYPES.includes(addType);
   // A live check of this channel against the library, fetched when the editor opens.
   const [review, setReview] = useState<ChannelReview | null>(null);
   const [choices, setChoices] = useState<{ text: string; matches: LibraryMatch[] } | null>(null);
@@ -307,6 +331,26 @@ function ChannelModal({
     } : r));
   }
 
+  // Fill the pick-list whenever the kind of rule (or movies/shows) changes.
+  useEffect(() => {
+    setRuleChoices(null);
+    setChoicesFailed(false);
+    if (!opened || !addType || !RULE_TYPES.includes(addType)) return;
+    let alive = true;
+    api.getRuleValues(addType, addKind)
+      .then((r) => { if (alive) setRuleChoices(r.values); })
+      .catch(() => { if (alive) setChoicesFailed(true); });
+    return () => { alive = false; };
+  }, [addType, addKind, opened]);
+
+  // What the Add box holds, as the entry text addItem understands.
+  function entryText(): string {
+    const v = newItem.trim();
+    if (!v || !addType) return v;
+    if (isRuleType) return `{${addKind === 'show' ? 'tv ' : ''}${addType}: ${v}}`;
+    return `{${addType}: ${v}}`;
+  }
+
   function pushRow(row: ContentRow) {
     setContent((c) => [...c, row]);
     setNewItem('');
@@ -318,7 +362,7 @@ function ChannelModal({
   //   several    -> ask which one (the two Aladdins);
   //   none       -> added as typed, exactly like before.
   async function addItem() {
-    const text = newItem.trim();
+    const text = entryText();
     if (!text || looking) return;
     // A rule ({genre: Animation}, {studio: Pixar}, {decade: 1980}…) stays live too: Plex is asked again on every refresh.
     const rule = ruleFromText(text);
@@ -547,20 +591,65 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
           </Button>
         )}
 
-        <Group gap="xs">
-          <TextInput
-            placeholder="Add title, {movie: Title}, {show: Title}, {collection: Name} or {genre: Animation}"
-            value={newItem}
-            onChange={(e) => setNewItem(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addItem()}
-            style={{ flex: 1 }}
+        <Group gap="xs" align="flex-start" wrap="nowrap">
+          <Select
+            placeholder="Title"
+            aria-label="What to add"
+            data={ADD_TYPES}
+            value={addType}
+            onChange={(v) => {
+              setAddType(v);
+              setNewItem('');
+              if (v === 'director') setAddKind('movie');  // shows have no director in the data
+            }}
+            clearable
+            w={150}
             size="sm"
           />
+          {isRuleType && ruleChoices ? (
+            <Select
+              placeholder={`Pick a ${addType}`}
+              aria-label="Rule value"
+              data={ruleChoices.map((c) => ({ value: c.value, label: `${c.label} (${c.count})` }))}
+              value={newItem || null}
+              onChange={(v) => setNewItem(v ?? '')}
+              searchable
+              clearable
+              limit={100}
+              nothingFoundMessage="Nothing like that in Plex"
+              style={{ flex: 1 }}
+              size="sm"
+            />
+          ) : (
+            <TextInput
+              placeholder={
+                addType === 'collection' ? 'Collection name'
+                  : addType === 'movie' || addType === 'show' ? 'Title'
+                  : isRuleType ? (choicesFailed ? 'Plex could not be read — type it exactly' : 'Loading from Plex…')
+                  : 'Title (or {genre: Animation} and the like)'
+              }
+              value={newItem}
+              onChange={(e) => setNewItem(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addItem()}
+              rightSection={isRuleType && !choicesFailed ? <Loader size="xs" /> : undefined}
+              style={{ flex: 1 }}
+              size="sm"
+            />
+          )}
           <Button size="sm" variant="light" color="orange" onClick={addItem} loading={looking}
             leftSection={<IconPlus size={14} />}>
             Add
           </Button>
         </Group>
+
+        {isRuleType && addType !== 'director' && (
+          <SegmentedControl
+            size="xs"
+            value={addKind}
+            onChange={(v) => { setAddKind(v as 'movie' | 'show'); setNewItem(''); }}
+            data={[{ label: 'Movies', value: 'movie' }, { label: 'TV shows', value: 'show' }]}
+          />
+        )}
 
         {choices && (
           <Card withBorder p="xs" style={{ background: 'var(--surface-panel)' }}>

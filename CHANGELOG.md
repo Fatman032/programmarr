@@ -14,6 +14,11 @@ All notable changes to Programmarr are documented here. This project follows
   `{decade: 1980}`; put `tv ` first for shows (`{tv genre: Comedy}`). Every refresh asks Plex
   for the current matches and finds each one in Tunarr by its Plex id, so a new movie in Plex
   joins a Live channel on its own.
+- **An Add box with a type dropdown.** Choose Movie, TV Show, Collection, Genre, Studio, Director,
+  Actor or Decade (or leave it blank for a plain title), then give the value. For a rule the value
+  is a searchable pick-list read from your Plex, with counts ("Animation (213)"), so a typo can't
+  get in; a Movies / TV shows switch picks which kind of item the rule is about. If Plex can't be
+  read you can still type the value. New server call: `GET /api/library/rule-values`.
 - **Not in Tunarr yet is reported, not lost.** A match Plex has but Tunarr hasn't scanned in is
   listed with the channel's notices ("N in Plex but not in Tunarr yet") and joins after Tunarr's
   next scan.

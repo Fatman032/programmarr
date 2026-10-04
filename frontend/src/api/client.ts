@@ -53,6 +53,10 @@ export const api = {
     req<{ matches: LibraryMatch[] }>(
       `/library/lookup?title=${encodeURIComponent(title)}${kind ? `&kind=${kind}` : ''}`),
 
+  // What a live rule can be set to (genres, studios, directors, actors, decades as Plex has them, with counts).
+  getRuleValues: (rule: string, kind: 'movie' | 'show') =>
+    req<{ values: RuleValue[] }>(`/library/rule-values?rule=${encodeURIComponent(rule)}&kind=${kind}`),
+
   getCsvInfo: () => req<CsvInfo>('/pipeline/csv/info'),
   getFacets: (minItems = 5) => req<LibraryFacets>(`/pipeline/facets?min_items=${minItems}`),
   getProgrammingBlocks: () => req<ProgrammingBlock[]>('/pipeline/programming-blocks'),
@@ -248,6 +252,7 @@ export type MovieRef = { movie: string } & ItemNumbers;
 export type ShowRef = { show: string } & ItemNumbers;
 // { rule, value }: a live rule asked of Plex on every refresh ("genre" "Animation", "studio" "Pixar",
 // "decade" "1980"…). `kind: 'show'` makes it a rule about TV shows; the default is movies.
+export interface RuleValue { value: string; label: string; count: number }
 export interface RuleRef { rule: 'genre' | 'studio' | 'director' | 'actor' | 'decade'; value: string; kind?: 'show' }
 export type ContentItem = string | { collection: string } | MovieRef | ShowRef | MatchRef | FranchiseRef | RuleRef;
 export function isRuleRef(c: ContentItem | null | undefined): c is RuleRef {
