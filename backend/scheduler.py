@@ -200,6 +200,11 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
         )
         if apply:  # a dry run isn't a real check, so it must not rewrite what the person sees
             notices.record(DATA_DIR, number, report)
+        if report.get("blocked"):
+            # A rule Plex couldn't answer: patching now would drop everything it brought.
+            summary["skipped"].append({"number": number, "name": name,
+                                       "reason": "left as it is — " + "; ".join(report["blocked"])})
+            continue
         fresh_ids = _program_ids(resolved)
 
         tch = channel_engine.find_channel_by_number(tunarr_url, number)

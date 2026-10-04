@@ -138,6 +138,9 @@ async def apply_channel(number: int):
         # before anything below can fail, so even a channel that resolves to nothing
         # explains itself.
         notice = notices.record(DATA_DIR, number, report)
+        if report.get("blocked"):
+            raise channel_engine.ChannelEngineError(
+                "not updated, the channel was left as it is — " + "; ".join(report["blocked"]))
         if not resolved:
             raise channel_engine.ChannelEngineError(
                 "resolved to empty — refusing to wipe the channel")

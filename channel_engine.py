@@ -839,6 +839,95 @@ def _resolve_collection_member(member, movie_map, show_map, id_index):
     return item
 
 
+# ── Live rules: genre / studio / director / actor / decade ──────────────────────────
+# A channel entry like {"rule": "genre", "value": "Animation"} is asked of Plex again on
+# every refresh, so the channel keeps finding new matches. Before this, picking a genre in
+# the Planner froze the matches into a plain list of titles and forgot the rule.
+
+RULE_KINDS = ("genre", "studio", "director", "actor", "decade")
+RULE_LEAD_CAST = 3   # same cut as the Planner's export: only the top-billed actors count
+
+
+def _rule_label(entry):
+    prefix = "tv " if entry.get("kind") == "show" else ""
+    return f"[{prefix}{entry.get('rule')}:{entry.get('value')}]"
+
+
+def _plex_tags(item, key):
+    return [t["tag"].strip().lower() for t in item.get(key, []) if isinstance(t, dict) and t.get("tag")]
+
+
+def _plex_listing(plex_url, token, kind, sections, cache):
+    """Every movie (kind="movie") or show (kind="show") Plex has, kept light, fetched once
+    per cycle (cached). None when Plex could not be read — callers must treat that as
+    "don't know", never as "nothing matches"."""
+    ck = ("plex-listing", kind)
+    if ck in cache:
+        return cache[ck]
+    sections = sections or get_plex_sections(plex_url, token)
+    plex_type, number = ("movie", 1) if kind == "movie" else ("show", 2)
+    listing, ok = [], bool(sections)
+    for section in sections:
+        if section.get("type") != plex_type:
+            continue
+        data = plex_get(plex_url, token, f"/library/sections/{section.get('key')}/all?type={number}", timeout=120)
+        if not data:
+            ok = False
+            continue
+        for it in data["MediaContainer"].get("Metadata", []):
+            if not it.get("title"):
+                continue
+            listing.append({
+                "title": it["title"], "kind": kind, "year": it.get("year"),
+                "plex_id": str(it["ratingKey"]) if it.get("ratingKey") is not None else None,
+                "genres": _plex_tags(it, "Genre"),
+                "directors": _plex_tags(it, "Director"),
+                "studios": [s.strip().lower() for s in str(it.get("studio") or "").split("|") if s.strip()],
+                "actors": [t["tag"].strip().lower() for t in it.get("Role", [])[:RULE_LEAD_CAST]
+                           if isinstance(t, dict) and t.get("tag")],
+            })
+    cache[ck] = listing if ok else None
+    return cache[ck]
+
+
+def _rule_matches(rule, value, item):
+    v = str(value).strip().lower()
+    if rule == "genre":
+        return v in item["genres"]
+    if rule == "studio":
+        return v in item["studios"]
+    if rule == "director":
+        return v in item["directors"]
+    if rule == "actor":
+        return v in item["actors"]
+    if rule == "decade":  # "1980" or "1980s": any year in that decade
+        digits = "".join(ch for ch in str(value) if ch.isdigit())[:4]
+        year = item.get("year")
+        return len(digits) == 4 and isinstance(year, int) and year // 10 == int(digits) // 10
+    return False
+
+
+def resolve_rule_members(entry, plex_url, token, sections, cache):
+    """The Plex items matching one {"rule": .., "value": ..} entry, as the same dicts a
+    collection gives ({"title", "kind", "plex_id", "year"}), so they are matched to Tunarr
+    by Plex id too. None when Plex could not be read."""
+    kind = "show" if entry.get("kind") == "show" else "movie"
+    listing = _plex_listing(plex_url, token, kind, sections, cache)
+    if listing is None:
+        return None
+    label = _rule_label(entry)
+    return [{"title": it["title"], "kind": kind, "plex_id": it["plex_id"], "year": it["year"], "_rule": label}
+            for it in listing if _rule_matches(entry["rule"], entry["value"], it)]
+
+
+def _item_keys(item):
+    keys = {(item.get("type"), item.get("title"))}
+    tunarr = (item.get("ids") or {}).get("tunarr")
+    if tunarr:
+        keys.add(("tunarr", tunarr))
+    return keys
+
+
 # ── Content resolution ─────────────────────────────────────────────────────────
 
 def resolve_content(content_list, movie_map, show_map,
@@ -858,6 +947,12 @@ def resolve_content(content_list, movie_map, show_map,
     - A {"collection": "Name"} ref — expanded to its members via Plex. Each member is
       matched by Plex's own id (and movie/show label) through `id_index`, not by title,
       so a collection's "Wonder Woman" the movie can't turn into the show.
+    - A {"rule": "genre"|"studio"|"director"|"actor"|"decade", "value": "..."} entry
+      (optionally "kind": "show") — Plex is asked for the current matches on every call, and
+      each one is matched to Tunarr by Plex id. A match Tunarr hasn't scanned in yet is
+      reported (and joins on its own once Tunarr has it). If Plex can't be read the rule is
+      NOT evaluated and report["blocked"] says so — callers must then leave the channel alone,
+      or it would lose everything the rule brought.
     - A {"match": "title_contains", "value": "..."} ref — word-boundary scan of the
       Tunarr library; order/exclude supported.
     - A {"match": "franchise", "name": "..."} ref — identity-based resolution via the
@@ -936,6 +1031,26 @@ def resolve_content(content_list, movie_map, show_map,
             else:
                 print(f"    WARNING: Collection '{col_name}' not found in Plex")
                 _miss(f"[collection:{col_name}]", "collection not found in Plex")
+        elif isinstance(entry, dict) and "rule" in entry:
+            label = _rule_label(entry)
+            if entry.get("rule") not in RULE_KINDS or not str(entry.get("value") or "").strip():
+                print(f"    WARNING: unsupported rule: {entry}")
+                _miss(label, "unsupported rule")
+            else:
+                rule_members = (resolve_rule_members(entry, plex_url, plex_token, plex_sections, collection_cache)
+                                if plex_url and plex_token else None)
+                if rule_members is None:
+                    why = "Plex could not be read, so this rule was not checked"
+                    print(f"    WARNING: {label}: {why}")
+                    _miss(label, why)
+                    if report is not None:
+                        report.setdefault("blocked", []).append(f"{label}: {why}")
+                elif not rule_members:
+                    print(f"    WARNING: rule {label} matched nothing in Plex")
+                    _miss(label, "matched nothing in Plex")
+                else:
+                    expanded_titles.extend(rule_members)  # dicts: matched by Plex id below
+                    print(f"    Rule {label}: {len(rule_members)} titles in Plex")
         elif isinstance(entry, dict) and "match" in entry:
             if entry["match"] == "franchise" and entry.get("name"):
                 fr_name = entry["name"]
@@ -967,20 +1082,35 @@ def resolve_content(content_list, movie_map, show_map,
             expanded_titles.append(entry)
 
     resolved = []
+    seen = set()      # lets a rule's item that is also listed by hand count once
+    waiting = {}      # rule label -> titles Plex has that Tunarr hasn't scanned in yet
     for entry in expanded_titles:
         if isinstance(entry, _Resolved):
             resolved.append(dict(entry))
+            seen |= _item_keys(entry)
             continue
-        if isinstance(entry, dict):  # a Plex collection member
+        rule_label = None
+        if isinstance(entry, dict):  # a Plex collection (or rule) member
             title = entry["title"]
+            rule_label = entry.get("_rule")
             item = _resolve_collection_member(entry, movie_map, show_map, id_index)
         else:
             title, kind = entry if isinstance(entry, tuple) else (entry, None)
             item = resolve_title(title, movie_map, show_map, kind=kind)
         if item:
+            if rule_label and _item_keys(item) & seen:
+                continue
             resolved.append(item)
+            seen |= _item_keys(item)
+        elif rule_label:
+            waiting.setdefault(rule_label, []).append(title)
         else:
             _miss(title, "not found in your library")
+
+    for label, titles in waiting.items():
+        first = ", ".join(titles[:3]) + ("…" if len(titles) > 3 else "")
+        _miss(label, f"{len(titles)} in Plex but not in Tunarr yet — it adds them after its next "
+                     f"scan, and they join then ({first})")
 
     resolved.extend(matched_items)
     return resolved, missing

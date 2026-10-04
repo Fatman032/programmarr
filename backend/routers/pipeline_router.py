@@ -2542,12 +2542,16 @@ async def run_surgical_deploy():
                     if any(isinstance(it, dict) and "collection" in it for it in ch.get("content", [])):
                         if plex_url and plex_token:
                             plex_sections = channel_engine.get_plex_sections(plex_url, plex_token)
+                    rule_report = {}
                     resolved, missing = channel_engine.resolve_content(
                         ch.get("content", []), mv, sh,
                         plex_url=plex_url, plex_token=plex_token,
                         plex_sections=plex_sections, collection_cache=collection_cache,
-                        franchise_index=fi, id_index=ix,
+                        franchise_index=fi, id_index=ix, report=rule_report,
                     )
+                    if rule_report.get("blocked"):
+                        raise channel_engine.ChannelEngineError(
+                            f"Channel #{n}: left as it is — " + "; ".join(rule_report["blocked"]))
                     if not resolved:
                         raise channel_engine.ChannelEngineError(
                             f"Channel #{n}: resolved to empty — refusing to update")
