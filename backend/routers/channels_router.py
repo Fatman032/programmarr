@@ -273,6 +273,42 @@ def _cached_library(tunarr_url, refresh=False):
         return _index_cache["index"]
 
 
+# The rule pick-lists read Plex's whole listing; keep it a few minutes so opening the Add
+# box repeatedly doesn't refetch it. (Applying a channel always reads Plex fresh.)
+_VALUES_TTL_SECONDS = 300
+_values_cache = {"at": 0.0, "plex": {}}
+_values_lock = threading.Lock()
+
+
+@router.get("/library/rule-values")
+async def library_rule_values(rule: str, kind: str = "movie", refresh: bool = False):
+    """The choices for a live rule's pick-list — {"values": [{value, label, count}]}: the
+    genres / studios / directors / actors in Plex (as Plex spells them, with how many items have
+    each) or the decades. 400 for an unknown rule; 502 when Plex can't be read, so the screen
+    can fall back to typing."""
+    if rule not in channel_engine.RULE_KINDS:
+        raise HTTPException(400, f"rule must be one of: {', '.join(channel_engine.RULE_KINDS)}")
+    if kind not in ("movie", "show"):
+        raise HTTPException(400, "kind must be 'movie' or 'show'")
+    cfg = _load_config()
+    plex_url, plex_token = cfg.get("plex_url", "").rstrip("/"), cfg.get("plex_token", "")
+    if not plex_url or not plex_token:
+        raise HTTPException(502, "Plex is not configured")
+
+    def _do():
+        with _values_lock:
+            if refresh or time.monotonic() - _values_cache["at"] > _VALUES_TTL_SECONDS:
+                _values_cache.update(at=time.monotonic(), plex={})
+            return channel_engine.rule_values(rule, kind, plex_url, plex_token, [], _values_cache["plex"])
+
+    values = await asyncio.to_thread(_do)
+    if values is None:
+        with _values_lock:
+            _values_cache["at"] = 0.0   # don't keep a failed read around
+        raise HTTPException(502, "Plex could not be read")
+    return {"values": values}
+
+
 @router.get("/library/lookup")
 async def library_lookup(title: str, kind: str = "", refresh: bool = False):
     """Every movie/show in the library with exactly this title, each with a ready-to-save

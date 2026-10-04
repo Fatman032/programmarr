@@ -285,3 +285,84 @@ def test_the_auto_update_skips_a_channel_whose_rule_plex_could_not_answer(server
     assert server.pushed == []
     (skipped,) = summary["skipped"]
     assert skipped["number"] == 7 and "left as it is" in skipped["reason"]
+
+
+# ── the pick-lists: what each rule can be set to ────────────────────────────────────
+
+def _values(rule, kind="movie", cache=None):
+    return channel_engine.rule_values(rule, kind, "http://plex", "t", [], {} if cache is None else cache)
+
+
+def test_genre_choices_come_with_counts_most_used_first(plex):
+    values = _values("genre")
+    got = {v["value"]: v["count"] for v in values}
+    assert got == {"Animation": 2, "Comedy": 2, "Family": 1, "Action": 2, "Fantasy": 1}
+    assert [v["count"] for v in values] == sorted((v["count"] for v in values), reverse=True)
+
+
+def test_choices_keep_plexs_spelling_not_a_lowercased_copy(plex):
+    assert "Animation" in {v["value"] for v in _values("genre")}
+    assert "20th Century Studios" in {v["value"] for v in _values("studio")}
+
+
+def test_every_choice_actually_finds_something(plex, lib):
+    """A pick-list that offered a value no item has would just recreate the typo problem."""
+    for rule in ("genre", "studio", "director", "actor", "decade"):
+        for v in _values(rule):
+            resolved, _ = _resolve([{"rule": rule, "value": v["value"]}], lib)
+            assert len(resolved) == v["count"], (rule, v)
+
+
+def test_decade_choices_are_the_decades_in_plex(plex):
+    assert _values("decade") == [{"value": "1980", "label": "1980s", "count": 2},
+                                 {"value": "1990", "label": "1990s", "count": 1},
+                                 {"value": "2000", "label": "2000s", "count": 1},
+                                 {"value": "2010", "label": "2010s", "count": 1}]
+
+
+def test_actor_choices_use_the_same_top_three_cut_as_the_rule(plex):
+    assert "Jim Varney" not in {v["value"] for v in _values("actor")}
+
+
+def test_show_choices_read_the_show_libraries(plex):
+    assert {v["value"] for v in _values("genre", "show")} == {"Action", "Comedy"}
+
+
+def test_choices_are_none_when_plex_cannot_be_read(plex):
+    plex.down = True
+    assert _values("genre") is None
+
+
+def test_one_fetch_serves_every_pick_list(plex):
+    cache = {}
+    for rule in ("genre", "studio", "actor"):
+        _values(rule, cache=cache)
+    assert plex.calls.count("/library/sections/1/all?type=1") == 1
+
+
+def test_the_choices_endpoint(plex, tmp_path, monkeypatch):
+    monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({"plex_url": "http://plex", "plex_token": "t"}))
+    channels_router._values_cache.update(at=0.0, plex={})
+    out = asyncio.run(channels_router.library_rule_values("genre", "movie"))
+    assert {v["value"] for v in out["values"]} >= {"Animation", "Action"}
+
+
+def test_the_choices_endpoint_errors_are_plain(plex, tmp_path, monkeypatch):
+    monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({"plex_url": "http://plex", "plex_token": "t"}))
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(channels_router.library_rule_values("mood", "movie"))
+    assert e.value.status_code == 400
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(channels_router.library_rule_values("genre", "anime"))
+    assert e.value.status_code == 400
+    plex.down = True
+    channels_router._values_cache.update(at=0.0, plex={})
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(channels_router.library_rule_values("genre", "movie"))
+    assert e.value.status_code == 502
+    (tmp_path / "config.json").write_text(json.dumps({}))
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(channels_router.library_rule_values("genre", "movie"))
+    assert e.value.status_code == 502

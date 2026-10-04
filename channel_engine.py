@@ -853,8 +853,9 @@ def _rule_label(entry):
     return f"[{prefix}{entry.get('rule')}:{entry.get('value')}]"
 
 
-def _plex_tags(item, key):
-    return [t["tag"].strip().lower() for t in item.get(key, []) if isinstance(t, dict) and t.get("tag")]
+def _plex_tags(item, key, keep_case=False):
+    tags = [t["tag"].strip() for t in item.get(key, []) if isinstance(t, dict) and t.get("tag")]
+    return tags if keep_case else [t.lower() for t in tags]
 
 
 def _plex_listing(plex_url, token, kind, sections, cache):
@@ -877,14 +878,21 @@ def _plex_listing(plex_url, token, kind, sections, cache):
         for it in data["MediaContainer"].get("Metadata", []):
             if not it.get("title"):
                 continue
+            raw = {
+                "genre": _plex_tags(it, "Genre", keep_case=True),
+                "director": _plex_tags(it, "Director", keep_case=True),
+                "studio": [s.strip() for s in str(it.get("studio") or "").split("|") if s.strip()],
+                "actor": [t["tag"].strip() for t in it.get("Role", [])[:RULE_LEAD_CAST]
+                          if isinstance(t, dict) and t.get("tag")],
+            }
             listing.append({
                 "title": it["title"], "kind": kind, "year": it.get("year"),
                 "plex_id": str(it["ratingKey"]) if it.get("ratingKey") is not None else None,
-                "genres": _plex_tags(it, "Genre"),
-                "directors": _plex_tags(it, "Director"),
-                "studios": [s.strip().lower() for s in str(it.get("studio") or "").split("|") if s.strip()],
-                "actors": [t["tag"].strip().lower() for t in it.get("Role", [])[:RULE_LEAD_CAST]
-                           if isinstance(t, dict) and t.get("tag")],
+                "raw": raw,   # as Plex spells them: what a pick-list shows
+                "genres": [v.lower() for v in raw["genre"]],
+                "directors": [v.lower() for v in raw["director"]],
+                "studios": [v.lower() for v in raw["studio"]],
+                "actors": [v.lower() for v in raw["actor"]],
             })
     cache[ck] = listing if ok else None
     return cache[ck]
@@ -918,6 +926,32 @@ def resolve_rule_members(entry, plex_url, token, sections, cache):
     label = _rule_label(entry)
     return [{"title": it["title"], "kind": kind, "plex_id": it["plex_id"], "year": it["year"], "_rule": label}
             for it in listing if _rule_matches(entry["rule"], entry["value"], it)]
+
+
+def rule_values(rule, kind, plex_url, token, sections, cache):
+    """What a rule can be set to, for a pick-list: [{"value", "label", "count"}] — the genres /
+    studios / directors / actors (as Plex spells them, with how many items have each) or the
+    decades in Plex. The same cut as the rule itself, so every choice finds at least one item.
+    None when Plex could not be read."""
+    if rule not in RULE_KINDS:
+        return []
+    listing = _plex_listing(plex_url, token, "show" if kind == "show" else "movie", sections, cache)
+    if listing is None:
+        return None
+    counts = {}   # lowercased -> [as Plex spells it, count]
+    for it in listing:
+        if rule == "decade":
+            year = it.get("year")
+            values = [str(year // 10 * 10)] if isinstance(year, int) else []
+        else:
+            values = it["raw"][rule]
+        for v in {x.lower(): x for x in values}.values():  # one count per item, however often listed
+            entry = counts.setdefault(v.lower(), [v, 0])
+            entry[1] += 1
+    out = [{"value": v, "label": f"{v}s" if rule == "decade" else v, "count": n} for v, n in counts.values()]
+    if rule == "decade":
+        return sorted(out, key=lambda o: o["value"])
+    return sorted(out, key=lambda o: (-o["count"], o["value"].lower()))
 
 
 def _item_keys(item):
