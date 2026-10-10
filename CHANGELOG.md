@@ -4,7 +4,7 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.1.1-beta.1] — 2026-10-04 (my build, BETA — being tested for a few days)
+## [1.1.1] — 2026-10-10 (my build)
 
 ### Fixed
 
@@ -27,6 +27,8 @@ All notable changes to Programmarr are documented here. This project follows
 
 ### Notes
 
+- Run for six days as a beta on a 12-channel library before this release: 13 of the 14 automatic
+  checks rebuilt nothing, and the one that did was a new movie joining a genre-rule channel.
 - The first automatic check after upgrading rebuilds each big channel once, to learn its baseline.
   Restarting Programmarr runs a check; after this release that no longer reshuffles unchanged channels.
 
