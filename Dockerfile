@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 
 # Pipeline scripts, prompt template, and static data catalogs
-COPY export.py create.py channel_engine.py channel_blocks.py generate_no_ai.py generate_from_collections.py \
+COPY export.py create.py channel_engine.py channel_blocks.py generate_no_ai.py generate_from_collections.py jellyfin_api.py \
      fetch_images.py sync_plex.py icon_engine.py badge_renderer.py PROMPT.md programming_blocks.json themed_keywords.json ./
 COPY badge_assets/ ./badge_assets/
 
