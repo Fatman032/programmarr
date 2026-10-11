@@ -26,12 +26,15 @@ All notable changes to Programmarr are documented here. This project follows
   Tunarr and the chosen server are both filled in. Settings has the same fields (the key is hidden like
   the Plex token), and the Dashboard checks Jellyfin like it checks Plex. Plex setups are unchanged.
   Stored as `media_server`, `jellyfin_url`, `jellyfin_api_key` in config.json.
+- **Export/Scan and the library picker read Jellyfin (BETA)**, the same four steps as with Plex: list the
+  server's movie and TV libraries, read every movie and show with the same details (genres, studios,
+  director, top-billed cast, rating, country, seasons and episodes), keep what Tunarr has synced, and
+  add what only Tunarr has. The CSV and the Planner work as before. Jellyfin has no Mood/Style tags, so
+  those Planner channels stay Plex-only.
 ### Notes
 
 - Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.
-- Still Plex-only for now: Export/Scan and the Planner's metadata, Plex collections, live rules, and
-  the Plex DVR sync. A Jellyfin-only setup can build and update channels from titles and pinned
-  entries but not use those yet.
+- Still Plex-only for now: collections, live rules, and the Live TV (DVR) sync.
 - Checked on a Jellyfin library of 1,629 movies and 113 shows through Tunarr 2026.10.1.
 
 ## [1.1.1] — 2026-10-10 (my build)

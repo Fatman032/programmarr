@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 import channel_engine  # noqa: E402
+import jellyfin_api    # noqa: E402  (Jellyfin beta: the library picker)
 import scheduler  # noqa: E402  (backend/ on sys.path) — shared deploy_lock
 
 # scheduler's import added SCRIPTS_DIR to sys.path, so the pure pipeline modules
@@ -179,7 +180,7 @@ async def _locked_stream(script: str, args: list[str], tag: str) -> AsyncGenerat
 
 class ExportOptions(BaseModel):
     no_crossref: bool = False
-    movie_sections: Optional[list[str]] = None   # primary Plex section keys; None = auto, [] = skip
+    movie_sections: Optional[list[str]] = None   # main library keys (Plex sections / Jellyfin libraries); None = auto, [] = skip
     tv_sections: Optional[list[str]] = None
     tunarr_movie_libs: Optional[list[str]] = None  # Tunarr library UUIDs for extra sources
     tunarr_tv_libs: Optional[list[str]] = None
@@ -188,10 +189,12 @@ class ExportOptions(BaseModel):
 @router.get("/pipeline/libraries")
 def list_libraries():
     cfg = _load_config()
-    plex_url   = cfg.get("plex_url", "").rstrip("/").lower()
-    plex_token = cfg.get("plex_token", "")
     tunarr_url = cfg.get("tunarr_url", "").rstrip("/")
     channel_engine.set_tunarr_auth_from_config(cfg)
+    if cfg.get("media_server") == "jellyfin":
+        return _list_jellyfin_libraries(cfg, tunarr_url)
+    plex_url   = cfg.get("plex_url", "").rstrip("/").lower()
+    plex_token = cfg.get("plex_token", "")
     if not plex_url or not plex_token:
         raise HTTPException(400, "Plex not configured")
 
@@ -238,6 +241,54 @@ def list_libraries():
     if not result and plex_error:
         raise HTTPException(502, plex_error)
 
+    return result
+
+
+def _other_tunarr_libraries(tunarr_url, skip):
+    """The libraries of every Tunarr source `skip(source)` doesn't exclude, keyed "tunarr:{id}"."""
+    result = []
+    for source in (channel_engine.api(tunarr_url, "GET", "/api/media-sources") or []):
+        if skip(source):
+            continue
+        source_name = source.get("name", source.get("type", "Unknown"))
+        for lib in source.get("libraries", []):
+            if not lib.get("enabled"):
+                continue
+            media_type = lib.get("mediaType", "")
+            lib_type = ("movie" if media_type in ("movie", "movies")
+                        else "show" if media_type == "shows" else None)
+            if lib_type:
+                result.append({"key": f"tunarr:{lib['id']}", "title": lib.get("name", lib["id"]),
+                               "type": lib_type, "server": source_name})
+    return result
+
+
+def _list_jellyfin_libraries(cfg, tunarr_url):
+    """The Jellyfin (beta) counterpart of the Plex listing above: the Jellyfin server's own movie
+    and TV libraries ("jellyfin:{id}"), then the other Tunarr sources ("tunarr:{id}")."""
+    jf_url = cfg.get("jellyfin_url", "").rstrip("/")
+    jf_key = cfg.get("jellyfin_api_key", "")
+    if not jf_url or not jf_key:
+        raise HTTPException(400, "Jellyfin not configured")
+    libs = jellyfin_api.libraries(jf_url, jf_key)
+    result = [{"key": f"jellyfin:{lib['id']}", "title": lib["name"], "type": lib["type"], "server": "Jellyfin"}
+              for lib in (libs or []) if lib["type"]]
+    jf_error = "" if libs is not None else (
+        f"Could not read Jellyfin at {jf_url} — check the Jellyfin URL and API key in Settings.")
+
+    if tunarr_url:
+        sources = channel_engine.api(tunarr_url, "GET", "/api/media-sources") or []
+        jellyfin_sources = [s for s in sources if s.get("type") == "jellyfin"]
+
+        def is_primary(source):
+            # Tunarr's copy of the same Jellyfin is already listed above. Tunarr may know it by a
+            # different address than Programmarr does, so a lone Jellyfin source counts as it too.
+            return source.get("type") == "jellyfin" and (
+                source.get("uri", "").rstrip("/").lower() == jf_url.lower() or len(jellyfin_sources) == 1)
+        result += _other_tunarr_libraries(tunarr_url, is_primary)
+
+    if not result and jf_error:
+        raise HTTPException(502, jf_error)
     return result
 
 

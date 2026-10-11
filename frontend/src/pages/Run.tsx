@@ -415,9 +415,11 @@ function ExportStep({ onDone }: { onDone: () => void }) {
   const selectedCount = Object.values(libSels).filter(Boolean).length;
 
   async function run() {
-    // Library keys are prefixed: "plex:{section_key}" for primary Plex, "tunarr:{lib_uuid}" for others.
-    const movieSections   = movieLibs.filter(l => libSels[l.key] && l.key.startsWith('plex:')).map(l => l.key.slice(5));
-    const tvSections      = tvLibs.filter(l => libSels[l.key] && l.key.startsWith('plex:')).map(l => l.key.slice(5));
+    // Library keys are prefixed: "plex:{section_key}" or "jellyfin:{library_id}" for your main server, "tunarr:{lib_uuid}" for others.
+    const isMain = (key: string) => key.startsWith('plex:') || key.startsWith('jellyfin:');
+    const mainKey = (key: string) => key.slice(key.indexOf(':') + 1);
+    const movieSections   = movieLibs.filter(l => libSels[l.key] && isMain(l.key)).map(l => mainKey(l.key));
+    const tvSections      = tvLibs.filter(l => libSels[l.key] && isMain(l.key)).map(l => mainKey(l.key));
     const tunarrMovieLibs = movieLibs.filter(l => libSels[l.key] && l.key.startsWith('tunarr:')).map(l => l.key.slice(7));
     const tunarrTvLibs    = tvLibs.filter(l => libSels[l.key] && l.key.startsWith('tunarr:')).map(l => l.key.slice(7));
     setLines([]); setDone(false); setSummary(null); setRunning(true);

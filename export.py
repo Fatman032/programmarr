@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-export.py — Export Plex library to CSV for LLM channel generation.
+export.py — Export your Plex or Jellyfin (beta) library to CSV for channel generation.
 
-Fetches full metadata from Plex (genres, ratings, directors, episode counts),
+Fetches full metadata from your media server (genres, ratings, directors, episode counts),
 cross-references against Tunarr to keep only synced content, and writes
-plex_library.csv ready to paste into any LLM.
+plex_library.csv ready to paste into any LLM. (The file keeps its old name for either server.)
 
 Usage:
     python export.py                    # writes plex_library.csv
@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 
 import channel_engine
+import jellyfin_api
 
 CONFIG_FILE = "config.json"
 OUTPUT_FILE = "plex_library.csv"
@@ -33,11 +34,18 @@ def load_config():
             cfg = json.load(f)
     except FileNotFoundError:
         print(f"ERROR: {CONFIG_FILE} not found.")
-        print("Create it with: tunarr_url and plex_servers (or plex_url + plex_token)")
+        print("Create it with: tunarr_url and plex_servers (or plex_url + plex_token, "
+              "or jellyfin_url + jellyfin_api_key with media_server \"jellyfin\")")
         sys.exit(1)
     if not cfg.get("tunarr_url"):
         print(f"ERROR: 'tunarr_url' missing from {CONFIG_FILE}")
         sys.exit(1)
+    if cfg.get("media_server") == "jellyfin":
+        if not (cfg.get("jellyfin_url") and cfg.get("jellyfin_api_key")):
+            print("ERROR: Jellyfin connection missing — set the Jellyfin URL and API key "
+                  f"(Settings -> Connections, or jellyfin_url + jellyfin_api_key in {CONFIG_FILE})")
+            sys.exit(1)
+        return cfg
     has_plex = cfg.get("plex_servers") or (cfg.get("plex_url") and cfg.get("plex_token"))
     if not has_plex:
         print(f"ERROR: Plex connection missing — set plex_servers or plex_url + plex_token in {CONFIG_FILE}")
@@ -55,6 +63,18 @@ def _get_plex_servers(cfg):
             if s.get("url") and s.get("token")
         ]
     return [("Plex", cfg["plex_url"].rstrip("/"), cfg["plex_token"])]
+
+
+def _media_server(cfg):
+    return "jellyfin" if cfg.get("media_server") == "jellyfin" else "plex"
+
+
+def _get_servers(cfg):
+    """(name, url, key) for the configured media server(s): the Plex servers + tokens, or
+    the Jellyfin server + API key."""
+    if _media_server(cfg) == "jellyfin":
+        return [("Jellyfin", cfg["jellyfin_url"].rstrip("/"), cfg["jellyfin_api_key"])]
+    return _get_plex_servers(cfg)
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
@@ -119,9 +139,9 @@ def fetch_plex_shows(plex_url, token, section_key):
 def build_tunarr_title_sets(tunarr_url):
     print("  Fetching Tunarr library for cross-reference...")
     sources = tunarr_get(tunarr_url, "/api/media-sources") or []
-    plex_sources = [s for s in sources if s.get("type") == "plex"]
+    plex_sources = [s for s in sources if s.get("type") in channel_engine.LIBRARY_SOURCE_TYPES]
     if not plex_sources:
-        print("  WARNING: No Plex source in Tunarr — skipping cross-reference")
+        print("  WARNING: No Plex or Jellyfin source in Tunarr — skipping cross-reference")
         return None, None
 
     movie_titles: set = set()
@@ -256,7 +276,7 @@ def build_extra_rows_from_tunarr(tunarr_url, seen_movie_titles, seen_show_titles
     if new_movies or new_shows:
         print(f"  Found {new_movies} additional movies, {new_shows} additional TV shows from Tunarr")
     else:
-        print("  No additional content (primary Plex covers everything)")
+        print("  No additional content (your main library covers everything)")
 
     return extra_movie_rows, extra_show_rows
 
@@ -321,14 +341,106 @@ def show_to_row(item):
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def _jf_names(values):
+    """'A|B' from Jellyfin's lists of names (plain strings, or {"Name": ..} objects)."""
+    out = []
+    for v in values or []:
+        name = v.get("Name") if isinstance(v, dict) else v
+        if name:
+            out.append(str(name))
+    return "|".join(out)
+
+
+def _jf_people(item, role, limit=None):
+    names = [p.get("Name") for p in item.get("People") or [] if p.get("Type") == role and p.get("Name")]
+    return "|".join(names[:limit] if limit else names)
+
+
+def jellyfin_movie_to_row(item):
+    return {
+        "Title": item.get("Name", ""),
+        "Year": item.get("ProductionYear", ""),
+        "Type": "Movie",
+        "Rating": item.get("OfficialRating", ""),
+        "Genres": _jf_names(item.get("Genres")),
+        "Director": _jf_people(item, "Director"),
+        "Studio": _jf_names(item.get("Studios")),
+        "Actors": _jf_people(item, "Actor", LEAD_CAST),
+        "Seasons": "",
+        "Episodes": "",
+        "Country": _jf_names(item.get("ProductionLocations")),
+        "Mood": "",    # Plex-only tags; Jellyfin has none
+        "Style": "",
+    }
+
+
+def jellyfin_show_to_row(item, counts):
+    seasons, episodes = counts.get(item.get("Id"), (0, 0))
+    return {
+        "Title": item.get("Name", ""),
+        "Year": item.get("ProductionYear", ""),
+        "Type": "TV",
+        "Rating": item.get("OfficialRating", ""),
+        "Genres": _jf_names(item.get("Genres")),
+        "Director": "",
+        "Studio": _jf_names(item.get("Studios")),
+        "Actors": _jf_people(item, "Actor", LEAD_CAST),
+        "Seasons": seasons or "",
+        "Episodes": episodes or "",
+        "Country": _jf_names(item.get("ProductionLocations")),
+        "Mood": "",
+        "Style": "",
+    }
+
+
+# ── One media server or the other: the same four steps either way ───────────────────
+
+def _sections(kind, url, key):
+    """The server's movie and TV libraries as [{key, title, type: "movie" | "show"}]."""
+    if kind == "jellyfin":
+        return [{"key": lib["id"], "title": lib["name"], "type": lib["type"]}
+                for lib in (jellyfin_api.libraries(url, key) or []) if lib["type"]]
+    return [{"key": s.get("key"), "title": s.get("title", ""), "type": s.get("type")}
+            for s in get_plex_sections(url, key) if s.get("type") in ("movie", "show")]
+
+
+def _chosen(sections, kind, picked, srv_idx):
+    """The libraries of one kind to export: all of them, or the ones picked in the UI.
+    Accepts both "{server_index}:{key}" (multi-server UI) and a bare "{key}" (CLI)."""
+    wanted = [s for s in sections if s["type"] == kind]
+    if picked is None:
+        return wanted
+    keys = {k.strip() for k in picked.split(",") if k.strip()}
+    return [s for s in wanted if f"{srv_idx}:{s['key']}" in keys or s["key"] in keys]
+
+
+def _movie_rows(kind, url, key, section_key):
+    if kind == "jellyfin":
+        found = jellyfin_api.items(url, key, section_key, "Movie") or []
+        print(f"  Found {len(found)} movies in Jellyfin")
+        return [jellyfin_movie_to_row(i) for i in found]
+    return [movie_to_row(i) for i in fetch_plex_movies(url, key, section_key)]
+
+
+def _show_rows(kind, url, key, section_key):
+    if kind == "jellyfin":
+        found = jellyfin_api.items(url, key, section_key, "Series") or []
+        print(f"  Found {len(found)} TV shows in Jellyfin")
+        counts = jellyfin_api.episode_counts(url, key, section_key) if found else {}
+        return [jellyfin_show_to_row(i, counts) for i in found]
+    return [show_to_row(i) for i in fetch_plex_shows(url, key, section_key)]
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Export Plex library to CSV")
+    parser = argparse.ArgumentParser(description="Export your Plex or Jellyfin (beta) library to CSV")
     parser.add_argument("--out", default=OUTPUT_FILE, help="Output CSV path")
     parser.add_argument("--no-crossref", action="store_true", help="Skip Tunarr sync check")
     parser.add_argument("--movie-sections", default=None,
-                        help="Comma-separated Plex section keys for movies (auto-detect if omitted, empty = skip).")
+                        help="Comma-separated movie library keys — Plex section keys or Jellyfin library ids "
+                             "(auto-detect if omitted, empty = skip).")
     parser.add_argument("--tv-sections", default=None,
-                        help="Comma-separated Plex section keys for TV shows (auto-detect if omitted, empty = skip).")
+                        help="Comma-separated TV library keys — Plex section keys or Jellyfin library ids "
+                             "(auto-detect if omitted, empty = skip).")
     parser.add_argument("--tunarr-movie-libs", default=None,
                         help="Comma-separated Tunarr library UUIDs for extra movie sources (auto = all, empty = skip).")
     parser.add_argument("--tunarr-tv-libs", default=None,
@@ -337,66 +449,53 @@ def main():
 
     cfg = load_config()
     tunarr_url = cfg["tunarr_url"].rstrip("/")
-    plex_server_list = _get_plex_servers(cfg)
-    multi = len(plex_server_list) > 1
+    kind = _media_server(cfg)
+    label = "Jellyfin" if kind == "jellyfin" else "Plex"
+    server_list = _get_servers(cfg)
+    multi = len(server_list) > 1
 
-    # ── Discover and fetch from all Plex servers ───────────────────────────────
-    print(f"\n[1/4] Discovering Plex library sections ({len(plex_server_list)} server(s))...")
+    # ── Discover and fetch from the media server(s) ────────────────────────────
+    print(f"\n[1/4] Discovering {label} libraries ({len(server_list)} server(s))...")
 
-    plex_movies: list = []
-    plex_shows: list  = []
+    primary_movie_rows: list = []
+    primary_show_rows: list  = []
     seen_movie_titles: set = set()
     seen_show_titles: set  = set()
 
-    for srv_idx, (srv_name, srv_url, srv_token) in enumerate(plex_server_list):
+    for srv_idx, (srv_name, srv_url, srv_key) in enumerate(server_list):
         print(f"\n  Server: {srv_name} ({srv_url})")
-        sections = get_plex_sections(srv_url, srv_token)
+        sections = _sections(kind, srv_url, srv_key)
         if not sections:
-            print(f"  WARNING: Could not reach {srv_name} or no sections found — skipping")
+            print(f"  WARNING: Could not reach {srv_name} or no libraries found — skipping")
             continue
 
-        if args.movie_sections is not None:
-            # Accept both encoded "{server_index}:{key}" (multi-server UI) and bare "{key}" (legacy/CLI).
-            keys = {k.strip() for k in args.movie_sections.split(",") if k.strip()}
-            movie_sections = [s for s in sections
-                              if (f"{srv_idx}:{s.get('key')}" in keys or s.get("key") in keys)
-                              and s.get("type") == "movie"]
-        else:
-            movie_sections = [s for s in sections if s.get("type") == "movie"]
-
-        if args.tv_sections is not None:
-            keys = {k.strip() for k in args.tv_sections.split(",") if k.strip()}
-            tv_sections = [s for s in sections
-                           if (f"{srv_idx}:{s.get('key')}" in keys or s.get("key") in keys)
-                           and s.get("type") == "show"]
-        else:
-            tv_sections = [s for s in sections if s.get("type") == "show"]
-
+        movie_sections = _chosen(sections, "movie", args.movie_sections, srv_idx)
+        tv_sections = _chosen(sections, "show", args.tv_sections, srv_idx)
         for s in movie_sections:
-            print(f"  Movie section: [{s['key']}] {s['title']}")
+            print(f"  Movie library: [{s['key']}] {s['title']}")
         for s in tv_sections:
-            print(f"  TV section:    [{s['key']}] {s['title']}")
+            print(f"  TV library:    [{s['key']}] {s['title']}")
 
-        # ── Fetch Plex content ─────────────────────────────────────────────────
+        # ── Fetch content ──────────────────────────────────────────────────────
         print(f"\n[2/4] Fetching content from {srv_name}...")
         for sec in movie_sections:
-            for item in fetch_plex_movies(srv_url, srv_token, sec["key"]):
-                t = item.get("title", "").lower().strip()
+            for row in _movie_rows(kind, srv_url, srv_key, sec["key"]):
+                t = str(row["Title"]).lower().strip()
                 if t not in seen_movie_titles:
                     seen_movie_titles.add(t)
-                    item["_source_name"] = srv_name if multi else ""
-                    plex_movies.append(item)
+                    row["Source"] = srv_name if multi else ""
+                    primary_movie_rows.append(row)
 
         for sec in tv_sections:
-            for item in fetch_plex_shows(srv_url, srv_token, sec["key"]):
-                t = item.get("title", "").lower().strip()
+            for row in _show_rows(kind, srv_url, srv_key, sec["key"]):
+                t = str(row["Title"]).lower().strip()
                 if t not in seen_show_titles:
                     seen_show_titles.add(t)
-                    item["_source_name"] = srv_name if multi else ""
-                    plex_shows.append(item)
+                    row["Source"] = srv_name if multi else ""
+                    primary_show_rows.append(row)
 
-    if not plex_movies and not plex_shows:
-        print("ERROR: No content fetched from any Plex server")
+    if not primary_movie_rows and not primary_show_rows:
+        print(f"ERROR: No content fetched from any {label} server")
         sys.exit(1)
 
     # ── Supplement from other Tunarr sources ───────────────────────────────────
@@ -433,22 +532,18 @@ def main():
     skipped_movies = []
     skipped_shows = []
 
-    for item in plex_movies:
-        title = item.get("title", "")
+    for row in primary_movie_rows:
+        title = str(row["Title"])
         if tunarr_movies is not None and title.lower().strip() not in tunarr_movies:
             skipped_movies.append(title)
             continue
-        row = movie_to_row(item)
-        row["Source"] = item.get("_source_name", "")
         rows.append(row)
 
-    for item in plex_shows:
-        title = item.get("title", "")
+    for row in primary_show_rows:
+        title = str(row["Title"])
         if tunarr_shows is not None and title.lower().strip() not in tunarr_shows:
             skipped_shows.append(title)
             continue
-        row = show_to_row(item)
-        row["Source"] = item.get("_source_name", "")
         rows.append(row)
 
     # Append content from other Tunarr sources (already crossref'd — they came from Tunarr).
