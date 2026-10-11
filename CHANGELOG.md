@@ -4,6 +4,28 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] — 1.2.0 beta (Jellyfin support is BETA)
+
+### Added
+
+- **Jellyfin as a Tunarr source (BETA).** Tunarr describes a movie or show the same way whether it
+  came from Plex or Jellyfin, so channel building (library index, pinned entries, the Add box,
+  notices, live updates) now works on a Tunarr that has a Jellyfin source. A Tunarr with only an
+  unsupported source (Emby, local) still gets a clear error.
+- **IMDB numbers are kept and used.** An item is now matched by TMDB, then IMDB, then the server's
+  own id (`plex` or `jellyfin`), then Tunarr's id, and as a last resort by exact title + year when
+  that names exactly one item. The order is the same on every server. A pin made on one server
+  finds the same movie on another through its TMDB/IMDB numbers, and a movie TMDB doesn't list but
+  IMDB does is now matched by IMDB.
+
+### Notes
+
+- Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.
+- Still Plex-only for now: Export/Scan and the Planner's metadata, Plex collections, live rules, and
+  the Plex DVR sync. A Jellyfin-only setup can build and update channels from titles and pinned
+  entries but not use those yet.
+- Checked on a Jellyfin library of 1,629 movies and 113 shows through Tunarr 2026.10.1.
+
 ## [1.1.1] — 2026-10-10 (my build)
 
 ### Fixed

@@ -138,6 +138,17 @@ def get_plex_sources(tunarr_url):
     return [s for s in sources if s.get("type") == "plex"]
 
 
+# The Tunarr media sources whose libraries Programmarr can read. Tunarr describes a movie or
+# show the same way whichever server it came from (outside ids + the server's own id), so
+# channel building works on any of them. Jellyfin support is BETA.
+LIBRARY_SOURCE_TYPES = ("plex", "jellyfin")
+
+
+def get_library_sources(tunarr_url):
+    sources = api(tunarr_url, "GET", "/api/media-sources") or []
+    return [s for s in sources if s.get("type") in LIBRARY_SOURCE_TYPES]
+
+
 def get_tunarr_version(tunarr_url):
     """Tunarr's self-reported version string, or None if it won't say.
 
@@ -173,10 +184,10 @@ def _version_suffix(tunarr_url):
 def _no_plex_source_error(tunarr_url):
     """Build an honest error for a Tunarr with no Plex media source.
 
-    Tunarr also supports jellyfin/emby/local sources. Programmarr's metadata
-    layer is Plex-only, so those users are genuinely unsupported — but telling
-    them "No Plex source found" reads like a broken Plex connection and sends
-    them debugging the wrong thing. Name what was actually there.
+    Tunarr also supports emby/local sources, which Programmarr can't read (Plex and,
+    in beta, Jellyfin are supported) — but telling them "No Plex source found" reads like
+    a broken connection and sends them debugging the wrong thing. Name what was
+    actually there.
     """
     sources = api(tunarr_url, "GET", "/api/media-sources")
     if sources is None:
@@ -212,13 +223,13 @@ def _no_plex_source_error(tunarr_url):
         )
     if not sources:
         return ChannelEngineError(
-            "Tunarr has no media sources configured. Add your Plex server in "
+            "Tunarr has no media sources configured. Add your Plex (or Jellyfin) server in "
             "Tunarr first (Settings -> Media Sources), then run Programmarr."
         )
     found = sorted({s.get("type", "unknown") for s in sources})
     return ChannelEngineError(
-        "Programmarr currently requires a Plex-backed Tunarr source. "
-        f"Found: {', '.join(found)}. Jellyfin/Emby support is not implemented yet."
+        "Programmarr needs a Plex or Jellyfin (beta) source in Tunarr. "
+        f"Found: {', '.join(found)}. Emby is not supported yet."
     )
 
 
@@ -231,11 +242,16 @@ def _no_plex_source_error(tunarr_url):
 #   - id_index: keyed by each item's own unique numbers. Nothing collapses, because
 #     no two different movies/shows share a number. This is what saved channels use.
 #
-# An item's numbers ("ids"): TMDB (the outside movie/TV database — survives a rename
-# or a Plex re-add), Plex's own id, and Tunarr's own id. Items no public database
-# knows about (family videos) have only the last two, which is why both are kept.
+# An item's numbers ("ids"), tried in this order and the same whichever server it came from:
+#   1. TMDB, 2. IMDB    — outside databases: survive a rename, a re-add, and a move from
+#                         one server to another
+#   3. the server's own id — "plex" or "jellyfin", whichever server the item is on
+#   4. Tunarr's own id
+# and, as a last resort, the exact title + year if that names exactly one item. Items no
+# outside database knows about (family videos) have only the last two numbers.
 
-_ID_PRIORITY = ("tmdb", "plex", "tunarr")
+_SERVER_ID_TYPES = ("plex", "jellyfin")
+_ID_PRIORITY = ("tmdb", "imdb") + _SERVER_ID_TYPES + ("tunarr",)
 
 
 def _identifier_map(obj):
@@ -251,9 +267,10 @@ def _identifier_map(obj):
 
 def _ids_for(obj, tunarr_id):
     ids = _identifier_map(obj)
-    if ids.get("plex"):
-        # Plex ids are only unique per Plex server; two servers can reuse a number.
-        ids["plex"] = f"{obj.get('mediaSourceId', '')}:{ids['plex']}"
+    for server_type in _SERVER_ID_TYPES:
+        if ids.get(server_type):
+            # A server's ids are only unique within that server; two servers can reuse a number.
+            ids[server_type] = f"{(obj or {}).get('mediaSourceId', '')}:{ids[server_type]}"
     if tunarr_id:
         ids["tunarr"] = str(tunarr_id)
     # Keep only the numbers we actually look things up by, so what gets saved into a
@@ -315,12 +332,12 @@ def find_by_plex_id(kind, plex_id, id_index):
 
 
 def _scan_tunarr_library(tunarr_url):
-    """One pass over every enabled Plex-backed library Tunarr has — movies, TV shows,
-    and "Other Videos" (family videos and the like). Builds the raw structures that
+    """One pass over every enabled library Tunarr has from a Plex or Jellyfin (beta) source —
+    movies, TV shows, and "Other Videos" (family videos and the like). Builds the raw structures that
     build_library_index (titles only, the original contract) and
     build_library_index_with_ids (titles + ids) each shape into their own return, so a
     library is fetched once whichever a caller uses."""
-    plex_sources = get_plex_sources(tunarr_url)
+    plex_sources = get_library_sources(tunarr_url)
     if not plex_sources:
         raise _no_plex_source_error(tunarr_url)
 
@@ -537,7 +554,8 @@ def resolve_by_ids(kind, ids, title, year, id_index):
     """Find the exact movie/show a saved channel entry means — without guessing.
 
     `kind` is "movie" or "show"; `ids` is the entry's saved numbers ({'tmdb': ..,
-    'plex': .., 'tunarr': ..}). Numbers are tried in priority order (TMDB, Plex, Tunarr).
+    'imdb': .., 'plex'|'jellyfin': .., 'tunarr': ..}). Numbers are tried in priority order
+    (TMDB, IMDB, the server's own id, Tunarr).
     If the first one stopped matching (a re-match changed it) but a spare still finds
     the item, that's a heal: the caller gets the item's current numbers to re-save.
     As a last resort the saved title + year may name exactly one item of that kind.

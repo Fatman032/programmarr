@@ -1,9 +1,9 @@
 """test_media_source_errors.py — an unsupported Tunarr setup must say what's wrong.
 
-Programmarr is Plex-only. A Jellyfin/Emby-backed Tunarr used to fail with
-"No Plex source found in Tunarr", which reads as a broken Plex connection and
-sends the user debugging Plex instead of learning they're unsupported. Each
-distinct cause now gets a distinct message.
+Programmarr reads Plex and (beta) Jellyfin sources. A Tunarr with only an unsupported
+source (Emby, local) used to fail with "No Plex source found in Tunarr", which reads as a
+broken Plex connection and sends the user debugging Plex instead of learning they're
+unsupported. Each distinct cause now gets a distinct message.
 """
 
 import sys
@@ -26,13 +26,30 @@ def stub_sources(monkeypatch, value):
     monkeypatch.setattr(channel_engine, "api", _api)
 
 
-def test_jellyfin_source_names_what_was_found(monkeypatch):
-    stub_sources(monkeypatch, [{"type": "jellyfin", "name": "Jellyfin"}])
+def test_an_unsupported_source_names_what_was_found(monkeypatch):
+    stub_sources(monkeypatch, [{"type": "emby", "name": "Emby"}])
     with pytest.raises(channel_engine.ChannelEngineError) as e:
         channel_engine.build_library_index("http://tunarr")
     msg = str(e.value)
-    assert "jellyfin" in msg
-    assert "Plex-backed" in msg
+    assert "emby" in msg
+    assert "Plex or Jellyfin" in msg
+
+
+def test_a_jellyfin_source_is_read_not_rejected(monkeypatch):
+    """Jellyfin (beta) is a supported source: no "unsupported" error, and its libraries are read."""
+    def _api(url, method, path, body=None, timeout=60):
+        if path == "/api/media-sources":
+            return [{"type": "jellyfin", "name": "Jellyfin", "libraries": [
+                {"id": "mv", "name": "Movies", "mediaType": "movies", "enabled": True}]}]
+        if path.endswith("/mv/programs"):
+            return [{"id": "p1", "program": {"title": "Heat", "year": 1995, "state": "ok",
+                                             "mediaSourceId": "jf", "identifiers": [
+                                                 {"type": "tmdb", "id": "949"},
+                                                 {"type": "jellyfin", "id": "abc", "sourceId": "jf"}]}}]
+        return None
+    monkeypatch.setattr(channel_engine, "api", _api)
+    movie_map, _show_map = channel_engine.build_library_index("http://tunarr")
+    assert "heat" in movie_map
 
 
 def test_unreachable_tunarr_blames_tunarr_not_plex(monkeypatch):

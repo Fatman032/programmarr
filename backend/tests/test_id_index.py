@@ -51,7 +51,7 @@ def _library(monkeypatch, libs, programs_by_lib, extra_source=None):
         {"id": lid, "name": lid, "mediaType": mt, "enabled": True} for lid, mt in libs]}]
     if extra_source:
         sources.append(extra_source)
-    monkeypatch.setattr(channel_engine, "get_plex_sources", lambda url: sources)
+    monkeypatch.setattr(channel_engine, "get_library_sources", lambda url: sources)
 
     def fake_api(url, method, path, body=None, timeout=60):
         for lid, items in programs_by_lib.items():
