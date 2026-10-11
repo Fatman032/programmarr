@@ -18,6 +18,13 @@ All notable changes to Programmarr are documented here. This project follows
   finds the same movie on another through its TMDB/IMDB numbers, and a movie TMDB doesn't list but
   IMDB does is now matched by IMDB.
 
+- **Setup without Plex (BETA).** The setup wizard used to count you as set up only with a Tunarr URL
+  AND a Plex URL + token, which left anyone on Jellyfin stuck at the wizard. The Connect step now asks
+  which media server feeds Tunarr (**Plex** or **Jellyfin (beta)**); Jellyfin hides the Plex fields and the
+  test checks Tunarr and that it has a Jellyfin source (it names what it found, or says to add one in
+  Tunarr). Settings has the same choice, and the Dashboard shows a Jellyfin card instead of a red
+  "Plex offline". Plex setups are unchanged. Stored as `media_server` in config.json.
+
 ### Notes
 
 - Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.

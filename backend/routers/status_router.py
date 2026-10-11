@@ -90,6 +90,17 @@ def probe(url: str, tunarr: bool = False) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def tunarr_sources(url: str) -> list:
+    """The media sources Tunarr is fed from, as [{type, name, uri}] — enough to tell a Plex
+    setup from a Jellyfin one. Nothing secret: the source's user/token fields are left out.
+    Uses whatever Tunarr credentials are currently set on the engine."""
+    sources = channel_engine.api(url.rstrip("/"), "GET", "/api/media-sources")
+    if not isinstance(sources, list):
+        return []
+    return [{"type": s.get("type"), "name": s.get("name"), "uri": s.get("uri")}
+            for s in sources if isinstance(s, dict)]
+
+
 def check_tunarr(url: str, username: str = "", password: str = "") -> dict:
     """Test a Tunarr URL + optional credentials WITHOUT reading saved config.
 
@@ -103,6 +114,8 @@ def check_tunarr(url: str, username: str = "", password: str = "") -> dict:
     try:
         channel_engine.set_tunarr_auth(username, password)
         result = {**probe(f"{url}/api/channels", tunarr=True), "url": url}
+        if result.get("ok"):
+            result["sources"] = tunarr_sources(url)  # so the wizard can tell Plex from Jellyfin
     finally:
         # Never let a connection test leave the process authenticated as
         # whatever was being tried.
@@ -155,10 +168,12 @@ def get_status():
             # Surfaced so a bug report can state it without the user digging —
             # the issue template asks for it.
             tr["version"] = channel_engine.get_tunarr_version(tunarr)
+            tr["sources"] = tunarr_sources(tunarr)
     if plex and token:
         pr = {**probe(f"{plex}/?X-Plex-Token={token}"), "url": plex}
 
-    return {"tunarr": tr, "plex": pr}
+    return {"tunarr": tr, "plex": pr,
+            "media_server": "jellyfin" if cfg.get("media_server") == "jellyfin" else "plex"}
 
 
 class ConnectionTest(BaseModel):

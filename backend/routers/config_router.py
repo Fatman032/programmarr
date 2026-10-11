@@ -31,6 +31,9 @@ class ConfigModel(BaseModel):
     # Whether the app polls GitHub for a newer release (the in-app update banner).
     # Default on; stored explicitly so the falsy-prune below can't drop a False.
     update_check_enabled: bool = True
+    # Which media server Tunarr is fed by: "" / "plex" (the default) or "jellyfin" (BETA).
+    # A Jellyfin setup needs no Plex address or token.
+    media_server: str = ""
 
 
 def _path() -> Path:
@@ -127,8 +130,11 @@ def config_status():
     has_plex = bool(config.get("plex_servers")) or bool(
         config.get("plex_url") and config.get("plex_token")
     )
+    media_server = "jellyfin" if config.get("media_server") == "jellyfin" else "plex"
     return {
-        "configured": bool(config.get("tunarr_url") and has_plex),
+        # Plex is only required when Plex is the media server.
+        "configured": bool(config.get("tunarr_url") and (has_plex or media_server == "jellyfin")),
+        "media_server": media_server,
         "has_tmdb": bool(config.get("tmdb_api_key")),
         "has_auth": bool(config.get("auth_username") and config.get("auth_password")),
     }

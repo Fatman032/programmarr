@@ -1,6 +1,6 @@
 import {
   Alert, Box, Button, Card, Group,
-  NumberInput, PasswordInput, Stack, Switch, Text, TextInput, Title,
+  NumberInput, PasswordInput, Select, Stack, Switch, Text, TextInput, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -114,6 +114,7 @@ export default function Settings() {
     tmdb_api_key: '', auth_username: '', auth_password: '',
     tunarr_username: '', tunarr_password: '',
     update_check_enabled: true,
+    media_server: 'plex',
   });
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -138,6 +139,7 @@ export default function Settings() {
         tunarr_username: cfg.tunarr_username || '',
         tunarr_password: cfg.tunarr_password || '',
         update_check_enabled: cfg.update_check_enabled !== false,
+        media_server: cfg.media_server === 'jellyfin' ? 'jellyfin' : 'plex',
       });
       const stored: string[] = cfg.channel_order || [];
       setChannelOrder(resolveOrder(stored));
@@ -173,7 +175,11 @@ export default function Settings() {
   async function save() {
     setSaving(true);
     try {
-      await api.saveConfig({ ...values, channel_order: channelOrder });
+      await api.saveConfig({
+        ...values,
+        media_server: values.media_server === 'jellyfin' ? 'jellyfin' : '',
+        channel_order: channelOrder,
+      });
       notifications.show({
         title: 'Saved',
         message: 'Configuration updated',
@@ -216,6 +222,16 @@ export default function Settings() {
             value={isMasked(values.tunarr_password) ? '' : values.tunarr_password}
             onChange={(e) => set('tunarr_password', e.currentTarget.value || MASK)}
           />
+          <Select
+            label="Media server"
+            description="Which server feeds Tunarr. Jellyfin support is beta; it needs no Plex address."
+            data={[{ value: 'plex', label: 'Plex' }, { value: 'jellyfin', label: 'Jellyfin (beta)' }]}
+            value={values.media_server}
+            onChange={(v) => set('media_server', v ?? 'plex')}
+            allowDeselect={false}
+          />
+          {values.media_server !== 'jellyfin' && (
+          <>
           <TextInput
             label="Your Plex URL"
             description="Your personal Plex server — used for playback and library export. Content from other Plex servers connected to Tunarr is included automatically."
@@ -229,6 +245,8 @@ export default function Settings() {
             value={isMasked(values.plex_token) ? '' : values.plex_token}
             onChange={(e) => set('plex_token', e.currentTarget.value || MASK)}
           />
+          </>
+          )}
         </Stack>
       </Card>
 

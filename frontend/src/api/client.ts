@@ -14,10 +14,10 @@ export const api = {
   saveConfig: (data: Record<string, any>) =>
     req('/config', { method: 'POST', body: JSON.stringify(data) }),
   getConfigStatus: () =>
-    req<{ configured: boolean; has_tmdb: boolean; has_auth: boolean }>('/config/status'),
+    req<{ configured: boolean; has_tmdb: boolean; has_auth: boolean; media_server?: 'plex' | 'jellyfin' }>('/config/status'),
 
   getStatus: () =>
-    req<{ tunarr: ConnStatus; plex: ConnStatus }>('/status'),
+    req<{ tunarr: ConnStatus; plex: ConnStatus; media_server?: 'plex' | 'jellyfin' }>('/status'),
   // Tests credentials the user has typed but not yet saved — onboarding needs to
   // validate before writing, or a typo'd URL produces a green "Setup complete".
   testConnection: (data: {
@@ -193,6 +193,8 @@ export interface ConnStatus {
   // green result does not actually vouch for the token.
   token_unverified?: boolean;
   note?: string;
+  // Tunarr only: the media sources it is fed from (tells Plex from Jellyfin).
+  sources?: { type: string; name: string; uri?: string }[];
 }
 export interface UpdateInfo {
   enabled: boolean;

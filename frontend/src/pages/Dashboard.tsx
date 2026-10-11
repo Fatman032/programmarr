@@ -144,9 +144,34 @@ function LiveRecipesCard({ status, onChange }: { status: RecipesStatus; onChange
   );
 }
 
+// Jellyfin (beta) has no card of its own to probe: Tunarr talks to it. This shows whether Tunarr has it.
+function JellyfinCard({ sources }: { sources?: { type: string; name: string; uri?: string }[] }) {
+  const jf = (sources ?? []).filter((s) => s.type === 'jellyfin');
+  const ok = jf.length > 0;
+  return (
+    <Card p="sm">
+      <Group gap="sm">
+        <ThemeIcon size="md" radius="xl" color={ok ? 'green' : 'red'} variant="light">
+          {ok ? <IconCircleCheck size={16} /> : <IconCircleX size={16} />}
+        </ThemeIcon>
+        <Box style={{ flex: 1, minWidth: 0 }}>
+          <Group gap={6}>
+            <Text size="sm" fw={600}>Jellyfin</Text>
+            <Badge size="xs" color="grape" variant="light">beta</Badge>
+          </Group>
+          <Text size="xs" c="dimmed" truncate style={{ maxWidth: 220 }}>
+            {ok ? jf.map((s) => s.name).join(', ') : 'No Jellyfin source in Tunarr'}
+          </Text>
+        </Box>
+        <Badge color={ok ? 'green' : 'red'} variant="dot">{ok ? 'In Tunarr' : 'Missing'}</Badge>
+      </Group>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const nav = useNavigate();
-  const [status, setStatus] = useState<{ tunarr: ConnStatus; plex: ConnStatus } | null>(null);
+  const [status, setStatus] = useState<{ tunarr: ConnStatus; plex: ConnStatus; media_server?: 'plex' | 'jellyfin' } | null>(null);
   const [guide, setGuide] = useState<Guide | null>(null);
   const [recipes, setRecipes] = useState<RecipesStatus | null>(null);
   const [configured, setConfigured] = useState(true);
@@ -206,7 +231,9 @@ export default function Dashboard() {
           icon={<IconSettings size={18} />}
           title="Setup required"
         >
-          Tunarr URL, Plex URL, and Plex Token aren't configured yet.{' '}
+          {status?.media_server === 'jellyfin'
+            ? "The Tunarr URL isn't configured yet."
+            : "Tunarr URL, Plex URL, and Plex Token aren't configured yet."}{' '}
           <Button
             variant="subtle"
             color="orange"
@@ -226,7 +253,9 @@ export default function Dashboard() {
         </Text>
         <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <ConnectionCard label="Tunarr" status={status?.tunarr} />
-          <ConnectionCard label="Plex"   status={status?.plex} />
+          {status?.media_server === 'jellyfin'
+            ? <JellyfinCard sources={status.tunarr?.sources} />
+            : <ConnectionCard label="Plex"   status={status?.plex} />}
         </SimpleGrid>
       </Box>
 
