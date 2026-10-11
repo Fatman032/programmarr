@@ -19,6 +19,7 @@ import {
   FranchiseCandidate, DeployPreviewResult, ThemeFacet,
 } from '../api/client';
 import TerminalOutput from '../components/TerminalOutput';
+import { useMediaServer } from '../api/mediaServer';
 
 // Copy text to the clipboard with a fallback for insecure contexts (plain HTTP on a
 // non-localhost origin, where navigator.clipboard is undefined). Shows a notification
@@ -180,6 +181,14 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
   onNuke: () => void;
 }) {
   const [hasTmdb, setHasTmdb] = useState(false);
+  const { isJellyfin } = useMediaServer();
+  // Collections come from the media server; on Jellyfin (beta) they aren't built yet.
+  useEffect(() => {
+    if (isJellyfin && (setup.method === 'collections' || setup.includeCollections)) {
+      onChange({ method: 'build', includeCollections: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isJellyfin]);
   const [tunarrChannels, setTunarrChannels] = useState<{ number: number; name: string }[]>([]);
   const [checkedNums, setCheckedNums] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -278,8 +287,9 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
           />
           <MethodCard
             icon={<IconStack2 size={18} />} title="Just my collections"
-            desc="One channel per Plex collection. Skips the library scan."
-            active={setup.method === 'collections'} onClick={() => onChange({ method: 'collections' })}
+            desc={isJellyfin ? 'One channel per collection — not on Jellyfin yet (beta).' : 'One channel per Plex collection. Skips the library scan.'}
+            active={!isJellyfin && setup.method === 'collections'}
+            onClick={() => { if (!isJellyfin) onChange({ method: 'collections' }); }}
           />
         </SimpleGrid>
       </Card>
@@ -290,9 +300,10 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
         <Stack gap="sm">
           {setup.method !== 'collections' && (
             <Checkbox
-              label="Also add channels from my Plex collections"
-              description="You'll choose which ones before deploying."
-              checked={setup.includeCollections}
+              label={`Also add channels from my ${isJellyfin ? 'Jellyfin' : 'Plex'} collections`}
+              description={isJellyfin ? 'Not on Jellyfin yet (beta).' : "You'll choose which ones before deploying."}
+              disabled={isJellyfin}
+              checked={!isJellyfin && setup.includeCollections}
               onChange={(e) => onChange({ includeCollections: e.currentTarget.checked })}
             />
           )}
@@ -391,6 +402,7 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
 // ── Export step ──────────────────────────────────────────────────────────────────
 
 function ExportStep({ onDone }: { onDone: () => void }) {
+  const { name: serverName } = useMediaServer();
   const [libraries, setLibraries] = useState<PlexLibrary[]>([]);
   const [libSels, setLibSels] = useState<Record<string, boolean>>({});
   const [libLoading, setLibLoading] = useState(true);
@@ -450,12 +462,12 @@ function ExportStep({ onDone }: { onDone: () => void }) {
         <Text size="xs" c="dimmed" mb="xs">Pick the libraries holding your movies &amp; shows.</Text>
         <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={16} />} py="xs" mb="sm">
           <Text size="xs">
-            <b>Uncheck any commercials, trailers, or bumper libraries.</b> Plex files them as “movies,”
+            <b>Uncheck any commercials, trailers, or bumper libraries.</b> {serverName} files them as “movies,”
             so they’ll sneak into your channels if left checked — those belong in Tunarr as a filler
             list (the <b>📺 Add commercials</b> toggle, next step).
           </Text>
         </Alert>
-        {libLoading && <Group gap="sm"><Loader size="xs" color="orange" /><Text size="sm" c="dimmed">Fetching Plex libraries…</Text></Group>}
+        {libLoading && <Group gap="sm"><Loader size="xs" color="orange" /><Text size="sm" c="dimmed">Fetching {serverName} libraries…</Text></Group>}
         {!libLoading && libError && (
           <Alert color="yellow" variant="light" icon={<IconAlertCircle size={16} />}>
             Could not load libraries — export will auto-detect: {libError}
@@ -1915,6 +1927,7 @@ function DiscoverStep({ discover, curatePools, onDone }: { discover: boolean; cu
 type CollectionSel = { id: string; name: string; channel_number: number; include: boolean };
 
 function CollectionsStep({ start, onDone }: { start: number; onDone: () => void }) {
+  const { name: serverName } = useMediaServer();
   const [collections, setCollections] = useState<PlexCollection[]>([]);
   const [selections, setSelections] = useState<CollectionSel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1962,7 +1975,7 @@ function CollectionsStep({ start, onDone }: { start: number; onDone: () => void 
   if (error) return <Alert color="red" icon={<IconX size={16} />} variant="light">{error}<Button variant="subtle" size="xs" mt="xs" onClick={onDone}>Skip Collections</Button></Alert>;
   if (collections.length === 0) return (
     <Stack gap="md">
-      <Alert color="yellow" icon={<IconAlertCircle size={16} />} variant="light">No collections found in your Plex library.</Alert>
+      <Alert color="yellow" icon={<IconAlertCircle size={16} />} variant="light">No collections found in your {serverName} library.</Alert>
       <Button variant="subtle" color="gray" onClick={onDone}>Continue</Button>
     </Stack>
   );
@@ -2048,6 +2061,9 @@ function DeployStep({ setup }: { setup: SetupState }) {
 
   const [config, setConfig] = useState<Record<string, string>>({});
   useEffect(() => { api.getConfig().then(setConfig).catch(() => {}); }, []);
+  // Jellyfin (beta): there's no automatic Live TV sync yet, so the Plex sync step is skipped and
+  // the summary shows the one-time Jellyfin Live TV steps instead.
+  const isJellyfin = config.media_server === 'jellyfin';
 
   const isEditMode = setup.mode === 'edit';
   const protectedNums = setup.protectedNums;
@@ -2173,10 +2189,14 @@ function DeployStep({ setup }: { setup: SetupState }) {
       setArtStatus('skip');
     }
 
-    // 3) Sync
-    setPhase('sync'); setSyncStatus('running'); setSyncLines([]);
-    const scode = await streamPipeline('/pipeline/sync', {}, (ev) => { if (ev.type === 'line') setSyncLines(l => [...l, ev.text]); });
-    setSyncStatus(scode === 0 ? 'ok' : 'warn');
+    // 3) Sync (Plex only — Jellyfin's Live TV is set up by hand for now, see the summary)
+    if (isJellyfin) {
+      setSyncStatus('skip');
+    } else {
+      setPhase('sync'); setSyncStatus('running'); setSyncLines([]);
+      const scode = await streamPipeline('/pipeline/sync', {}, (ev) => { if (ev.type === 'line') setSyncLines(l => [...l, ev.text]); });
+      setSyncStatus(scode === 0 ? 'ok' : 'warn');
+    }
 
     setPhase('done');
   }
@@ -2186,6 +2206,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
   const tunarrUrl = config.tunarr_url || '';
   const plexLiveTvUrl = config.plex_url ? `${config.plex_url.replace(/\/$/, '')}/web/index.html#!/settings/livetv` : '';
   const xmltvUrl = tunarrUrl ? `${tunarrUrl.replace(/\/$/, '')}/api/xmltv.xml` : '';
+  const m3uUrl = tunarrUrl ? `${tunarrUrl.replace(/\/$/, '')}/api/channels.m3u` : '';
+  const jellyfinWebUrl = config.jellyfin_url ? `${config.jellyfin_url.replace(/\/$/, '')}/web/` : '';
   const cascadeRunning = phase === 'deploying' || phase === 'art' || phase === 'sync';
 
   function StatusRow({ status, label, children }: { status: CascadeStatus; label: string; children?: React.ReactNode }) {
@@ -2235,6 +2257,42 @@ function DeployStep({ setup }: { setup: SetupState }) {
           </Stack>
 
           {deployOk && <Collapse in={showArt}><Box mb="md"><TerminalOutput lines={artLines} done success={artStatus === 'ok'} height={180} /></Box></Collapse>}
+
+          {/* Jellyfin (beta): no automatic Live TV sync yet — the one-time steps, with the addresses to paste. */}
+          {deployOk && isJellyfin && (
+            <Alert color="yellow" variant="light" icon={<IconAlertCircle size={18} />} mb="md"
+              title="One more step — add your channels to Jellyfin Live TV">
+              <Text size="sm" mb="xs">
+                Your channels are live in <b>Tunarr</b>. Jellyfin doesn’t pick them up on its own yet (automatic
+                setup is coming in a later beta), so do this once:
+              </Text>
+              <Stack gap={2} mb="sm">
+                <Text size="sm">1. Open <b>Jellyfin → Dashboard → Live TV</b></Text>
+                <Text size="sm">2. Under <b>Tuner Devices</b>, click <b>+</b>, choose <b>M3U Tuner</b>, and paste:</Text>
+              </Stack>
+              {m3uUrl && (
+                <Group gap="xs" wrap="nowrap" mb="sm">
+                  <Code style={{ flex: 1, overflowX: 'auto', whiteSpace: 'nowrap' }}>{m3uUrl}</Code>
+                  <Button size="compact-xs" variant="light" color="yellow" leftSection={<IconCopy size={12} />}
+                    onClick={() => copyText(m3uUrl, 'M3U URL copied')}>
+                    Copy
+                  </Button>
+                </Group>
+              )}
+              <Text size="sm" mb={4}>3. Under <b>TV Guide Data Providers</b>, click <b>+</b>, choose <b>XMLTV</b>, and paste:</Text>
+              {xmltvUrl && (
+                <Group gap="xs" wrap="nowrap" mb="sm">
+                  <Code style={{ flex: 1, overflowX: 'auto', whiteSpace: 'nowrap' }}>{xmltvUrl}</Code>
+                  <Button size="compact-xs" variant="light" color="yellow" leftSection={<IconCopy size={12} />}
+                    onClick={() => copyText(xmltvUrl, 'XMLTV URL copied')}>
+                    Copy
+                  </Button>
+                </Group>
+              )}
+              <Text size="sm" mb="xs">4. Save, then refresh the guide data. Your channels appear under Live TV.</Text>
+              {jellyfinWebUrl && <Button component="a" href={jellyfinWebUrl} target="_blank" rel="noreferrer" variant="light" color="grape" size="xs" leftSection={<IconExternalLink size={13} />}>Open Jellyfin</Button>}
+            </Alert>
+          )}
 
           {/* Prominent, can't-miss manual-step callout when Plex didn't auto-sync. */}
           {syncFailed && (
@@ -2294,7 +2352,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
           <Text fw={700} size="lg" mb="xs">Surgical deploy</Text>
           <Text size="sm" c="dimmed" mb="md">
             Compares your new lineup to what's currently deployed. New channels are created, removed channels are deleted,
-            changed channels are updated in place (preserving their Tunarr id and Plex DVR mapping), and unchanged channels are left alone.
+            changed channels are updated in place (keeping their Tunarr id, so your Live TV guide keeps them), and unchanged channels are left alone.
             Live channels are always updated in place — never deleted.
           </Text>
 
@@ -2353,7 +2411,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
                 <>
                   <StatusRow status={phase === 'deploying' ? 'running' : 'ok'} label="Applying surgical diff to Tunarr" />
                   {setup.fetchArt && <StatusRow status={phase === 'art' ? 'running' : phase === 'sync' ? 'ok' : 'pending'} label="Fetching channel art" />}
-                  <StatusRow status={phase === 'sync' ? 'running' : 'pending'} label="Syncing with Plex" />
+                  <StatusRow status={isJellyfin ? 'skip' : phase === 'sync' ? 'running' : 'pending'} label={isJellyfin ? 'Jellyfin Live TV — one-time steps at the end' : 'Syncing with Plex'} />
                   <TerminalOutput
                     lines={phase === 'deploying' ? deployLines : phase === 'art' ? artLines : syncLines}
                     done={false} success height={200} />
@@ -2429,7 +2487,9 @@ function DeployStep({ setup }: { setup: SetupState }) {
           )}
           <Card withBorder p="lg">
             <Text size="sm" c="dimmed" mb="md">
-              Deploying writes to Tunarr now.{setup.fetchArt ? ' Channel art and' : ' '} Plex sync run automatically right after.
+              Deploying writes to Tunarr now.{isJellyfin
+                ? `${setup.fetchArt ? ' Channel art is fetched right after; then' : ' Then'} you add the channels to Jellyfin Live TV once (the steps are shown at the end).`
+                : `${setup.fetchArt ? ' Channel art and' : ''} Plex sync run automatically right after.`}
             </Text>
 
             {/* Preview gate */}
@@ -2485,7 +2545,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
               <Stack gap="xs" mb="md">
                 <StatusRow status={phase === 'deploying' ? 'running' : 'ok'} label="Deploying to Tunarr" />
                 {setup.fetchArt && <StatusRow status={phase === 'art' ? 'running' : phase === 'sync' ? 'ok' : 'pending'} label="Fetching channel art" />}
-                <StatusRow status={phase === 'sync' ? 'running' : 'pending'} label="Syncing with Plex" />
+                <StatusRow status={isJellyfin ? 'skip' : phase === 'sync' ? 'running' : 'pending'} label={isJellyfin ? 'Jellyfin Live TV — one-time steps at the end' : 'Syncing with Plex'} />
                 <TerminalOutput
                   lines={phase === 'deploying' ? deployLines : phase === 'art' ? artLines : syncLines}
                   done={false} success height={200} />

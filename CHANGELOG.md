@@ -31,6 +31,11 @@ All notable changes to Programmarr are documented here. This project follows
   director, top-billed cast, rating, country, seasons and episodes), keep what Tunarr has synced, and
   add what only Tunarr has. The CSV and the Planner work as before. Jellyfin has no Mood/Style tags, so
   those Planner channels stay Plex-only.
+- **The screens name your server (BETA).** On a Jellyfin setup the library scan, the channel editor, the
+  collections step and the deploy steps say Jellyfin instead of Plex. Features that aren't built for
+  Jellyfin yet (collections, live rules) are shown but say "not on Jellyfin yet" instead of failing, and
+  the deploy skips the Plex sync and ends with the one-time Jellyfin Live TV steps (M3U tuner + XMLTV
+  guide addresses from Tunarr, with copy buttons).
 ### Notes
 
 - Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.

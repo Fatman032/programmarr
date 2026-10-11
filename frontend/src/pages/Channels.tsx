@@ -10,6 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useMediaServer } from '../api/mediaServer';
 import { AmbiguousChoice, api, buildCommercials, Channel, ChannelNotice, ChannelReview, ChannelSyncState, commercialListIds, ContentItem, FillerList, FranchiseRef, isCollectionRef, isMatchRef, isRuleRef, LibraryMatch, RecipeMatch, RuleValue, ruleFromText, TunarrChannel } from '../api/client';
 
 function syncedAgo(iso?: string): string {
@@ -42,20 +43,25 @@ function optionLabel(a: AmbiguousChoice, o: AmbiguousChoice['options'][number]):
 }
 
 // What the Add box's first dropdown offers. Left blank it adds a plain title, as before.
-const ADD_TYPES = [
-  { group: 'Fixed', items: [
-    { value: 'movie', label: 'Movie' },
-    { value: 'show', label: 'TV Show' },
-    { value: 'collection', label: 'Collection' },
-  ] },
-  { group: 'Live rule (asks Plex on every refresh)', items: [
-    { value: 'genre', label: 'Genre' },
-    { value: 'studio', label: 'Studio' },
-    { value: 'director', label: 'Director' },
-    { value: 'actor', label: 'Actor' },
-    { value: 'decade', label: 'Decade' },
-  ] },
-];
+// Collections and live rules ask the media server directly; on Jellyfin (beta) they're not built yet,
+// so they're shown but can't be picked, instead of pretending to work.
+function addTypes(isJellyfin: boolean) {
+  const notYet = isJellyfin ? ' — not on Jellyfin yet' : '';
+  return [
+    { group: 'Fixed', items: [
+      { value: 'movie', label: 'Movie' },
+      { value: 'show', label: 'TV Show' },
+      { value: 'collection', label: `Collection${notYet}`, disabled: isJellyfin },
+    ] },
+    { group: isJellyfin ? 'Live rule (not on Jellyfin yet)' : 'Live rule (asks Plex on every refresh)', items: [
+      { value: 'genre', label: 'Genre', disabled: isJellyfin },
+      { value: 'studio', label: 'Studio', disabled: isJellyfin },
+      { value: 'director', label: 'Director', disabled: isJellyfin },
+      { value: 'actor', label: 'Actor', disabled: isJellyfin },
+      { value: 'decade', label: 'Decade', disabled: isJellyfin },
+    ] },
+  ];
+}
 const RULE_TYPES = ['genre', 'studio', 'director', 'actor', 'decade'];
 
 const SHUFFLE_COLOR: Record<string, string> = { ordered: 'blue', block: 'violet', shuffle: 'teal' };
@@ -235,6 +241,7 @@ function ChannelModal({
   const [looking, setLooking] = useState(false);
   // The Add box: a kind (blank = plain title), movies or TV shows for a rule, and the value.
   const [addType, setAddType] = useState<string | null>(null);
+  const { name: serverName, isJellyfin } = useMediaServer();
   const [addKind, setAddKind] = useState<'movie' | 'show'>('movie');
   // What Plex has for the chosen rule (a pick-list). null = not loaded or Plex unreachable -> type it instead.
   const [ruleChoices, setRuleChoices] = useState<RuleValue[] | null>(null);
@@ -595,7 +602,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
           <Select
             placeholder="Title"
             aria-label="What to add"
-            data={ADD_TYPES}
+            data={addTypes(isJellyfin)}
             value={addType}
             onChange={(v) => {
               setAddType(v);
@@ -616,7 +623,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
               searchable
               clearable
               limit={100}
-              nothingFoundMessage="Nothing like that in Plex"
+              nothingFoundMessage={`Nothing like that in ${serverName}`}
               style={{ flex: 1 }}
               size="sm"
             />
@@ -625,7 +632,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
               placeholder={
                 addType === 'collection' ? 'Collection name'
                   : addType === 'movie' || addType === 'show' ? 'Title'
-                  : isRuleType ? (choicesFailed ? 'Plex could not be read — type it exactly' : 'Loading from Plex…')
+                  : isRuleType ? (choicesFailed ? `${serverName} could not be read — type it exactly` : `Loading from ${serverName}…`)
                   : 'Title (or {genre: Animation} and the like)'
               }
               value={newItem}

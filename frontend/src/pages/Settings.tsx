@@ -13,6 +13,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { setKnownMediaServer } from '../api/mediaServer';
 
 const MASK = '••••••••';
 
@@ -183,6 +184,7 @@ export default function Settings() {
         media_server: values.media_server === 'jellyfin' ? 'jellyfin' : '',
         channel_order: channelOrder,
       });
+      setKnownMediaServer(values.media_server === 'jellyfin' ? 'jellyfin' : 'plex');
       notifications.show({
         title: 'Saved',
         message: 'Configuration updated',
