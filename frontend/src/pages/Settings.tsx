@@ -115,6 +115,7 @@ export default function Settings() {
     tunarr_username: '', tunarr_password: '',
     update_check_enabled: true,
     media_server: 'plex',
+    jellyfin_url: '', jellyfin_api_key: '',
   });
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -140,6 +141,8 @@ export default function Settings() {
         tunarr_password: cfg.tunarr_password || '',
         update_check_enabled: cfg.update_check_enabled !== false,
         media_server: cfg.media_server === 'jellyfin' ? 'jellyfin' : 'plex',
+        jellyfin_url: cfg.jellyfin_url || '',
+        jellyfin_api_key: cfg.jellyfin_api_key || '',
       });
       const stored: string[] = cfg.channel_order || [];
       setChannelOrder(resolveOrder(stored));
@@ -224,7 +227,7 @@ export default function Settings() {
           />
           <Select
             label="Media server"
-            description="Which server feeds Tunarr. Jellyfin support is beta; it needs no Plex address."
+            description="Which server feeds Tunarr. Jellyfin support is beta."
             data={[{ value: 'plex', label: 'Plex' }, { value: 'jellyfin', label: 'Jellyfin (beta)' }]}
             value={values.media_server}
             onChange={(v) => set('media_server', v ?? 'plex')}
@@ -244,6 +247,23 @@ export default function Settings() {
             placeholder={isMasked(values.plex_token) ? 'Token saved — enter new value to change' : 'Your Plex token'}
             value={isMasked(values.plex_token) ? '' : values.plex_token}
             onChange={(e) => set('plex_token', e.currentTarget.value || MASK)}
+          />
+          </>
+          )}
+          {values.media_server === 'jellyfin' && (
+          <>
+          <TextInput
+            label="Your Jellyfin URL"
+            placeholder="http://192.168.1.10:8096"
+            value={values.jellyfin_url}
+            onChange={(e) => set('jellyfin_url', e.currentTarget.value)}
+          />
+          <PasswordInput
+            label="Your Jellyfin API Key"
+            description="Create one in Jellyfin: Dashboard → API Keys → +"
+            placeholder={isMasked(values.jellyfin_api_key) ? 'Key saved — enter new value to change' : 'Your Jellyfin API key'}
+            value={isMasked(values.jellyfin_api_key) ? '' : values.jellyfin_api_key}
+            onChange={(e) => set('jellyfin_api_key', e.currentTarget.value || MASK)}
           />
           </>
           )}

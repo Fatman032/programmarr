@@ -87,8 +87,10 @@ export default function Onboarding({ onComplete }: Props) {
   const [passwordConfirm, setPasswordConfirm] = useState('');
 
   // Step 1 — Connections
-  // Which media server feeds Tunarr. Jellyfin (beta) needs no Plex address or token.
+  // Which media server feeds Tunarr: Plex (URL + token) or Jellyfin (beta, URL + API key).
   const [mediaServer, setMediaServer] = useState<'plex' | 'jellyfin'>('plex');
+  const [jellyfinUrl, setJellyfinUrl] = useState('http://');
+  const [jellyfinKey, setJellyfinKey] = useState('');
   const [tunarrUrl, setTunarrUrl] = useState('http://');
   const [plexUrl, setPlexUrl] = useState('http://');
   const [plexToken, setPlexToken] = useState('');
@@ -100,16 +102,14 @@ export default function Onboarding({ onComplete }: Props) {
   // Plex, so a typo produced a green "Setup complete" and a broken install.
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<
-    { tunarr?: ConnStatus; plex?: ConnStatus } | null
+    { tunarr?: ConnStatus; plex?: ConnStatus; jellyfin?: ConnStatus } | null
   >(null);
-  const jellyfinSources = (testResult?.tunarr?.sources ?? []).filter((s) => s.type === 'jellyfin');
-  const testPassed = mediaServer === 'jellyfin'
-    ? !!testResult?.tunarr?.ok && jellyfinSources.length > 0
-    : !!testResult?.tunarr?.ok && !!testResult?.plex?.ok;
-  // What has to be filled in before testing / continuing.
-  const connectReady = mediaServer === 'jellyfin'
-    ? !!tunarrUrl.trim()
-    : !!tunarrUrl.trim() && !!plexUrl.trim() && !!plexToken.trim();
+  const testPassed = !!testResult?.tunarr?.ok
+    && (mediaServer === 'jellyfin' ? !!testResult?.jellyfin?.ok : !!testResult?.plex?.ok);
+  // What has to be filled in before testing / continuing: Tunarr plus the chosen server's address + key.
+  const connectReady = !!tunarrUrl.trim() && (mediaServer === 'jellyfin'
+    ? !!jellyfinUrl.trim() && !!jellyfinKey.trim()
+    : !!plexUrl.trim() && !!plexToken.trim());
 
   async function testConnections() {
     setTesting(true);
@@ -119,7 +119,9 @@ export default function Onboarding({ onComplete }: Props) {
         tunarr_url: tunarrUrl.trim(),
         tunarr_username: tunarrUser.trim(),
         tunarr_password: tunarrPass,
-        ...(mediaServer === 'plex' ? { plex_url: plexUrl.trim(), plex_token: plexToken.trim() } : {}),
+        ...(mediaServer === 'plex'
+          ? { plex_url: plexUrl.trim(), plex_token: plexToken.trim() }
+          : { jellyfin_url: jellyfinUrl.trim(), jellyfin_api_key: jellyfinKey.trim() }),
       }));
     } catch (e: any) {
       setTestResult({ tunarr: { ok: false, url: '', error: e.message } });
@@ -142,6 +144,8 @@ export default function Onboarding({ onComplete }: Props) {
       };
       if (mediaServer === 'jellyfin') {
         config.media_server = 'jellyfin';
+        config.jellyfin_url = jellyfinUrl.trim();
+        config.jellyfin_api_key = jellyfinKey.trim();
       } else {
         config.plex_url = plexUrl.trim();
         config.plex_token = plexToken.trim();
@@ -246,7 +250,7 @@ export default function Onboarding({ onComplete }: Props) {
                 <Text fw={700} mb={4}>Connect your services</Text>
                 <Text size="sm" c="dimmed">
                   {mediaServer === 'jellyfin'
-                    ? 'Tunarr must be running and reachable on your network, with your Jellyfin server already added in Tunarr (Settings → Sources).'
+                    ? 'Tunarr and Jellyfin must be running and reachable on your network.'
                     : 'Tunarr and Plex must be running and reachable on your network.'}
                 </Text>
               </Box>
@@ -300,6 +304,25 @@ export default function Onboarding({ onComplete }: Props) {
               />
               </>
               )}
+              {mediaServer === 'jellyfin' && (
+              <>
+              <TextInput
+                label="Jellyfin URL"
+                placeholder="http://192.168.1.10:8096"
+                value={jellyfinUrl}
+                onChange={(e) => setJellyfinUrl(e.currentTarget.value)}
+                required
+              />
+              <PasswordInput
+                label="Jellyfin API Key"
+                description="Create one in Jellyfin: Dashboard → API Keys → +"
+                placeholder="Your Jellyfin API key"
+                value={jellyfinKey}
+                onChange={(e) => setJellyfinKey(e.currentTarget.value)}
+                required
+              />
+              </>
+              )}
               <PasswordInput
                 label="TMDB API Key"
                 description="Optional — for channel logo images. Free key at themoviedb.org"
@@ -335,7 +358,7 @@ export default function Onboarding({ onComplete }: Props) {
 
               {testResult && (
                 <Stack gap="xs">
-                  {(mediaServer === 'jellyfin' ? (['tunarr'] as const) : (['tunarr', 'plex'] as const)).map((k) => {
+                  {(mediaServer === 'jellyfin' ? (['tunarr', 'jellyfin'] as const) : (['tunarr', 'plex'] as const)).map((k) => {
                     const r = testResult[k];
                     if (!r) return null;
                     return (
@@ -346,7 +369,7 @@ export default function Onboarding({ onComplete }: Props) {
                         p="xs"
                       >
                         <Text size="sm" fw={600}>
-                          {k === 'tunarr' ? 'Tunarr' : 'Plex'}: {r.ok ? 'Connected' : 'Failed'}
+                          {k === 'tunarr' ? 'Tunarr' : k === 'jellyfin' ? 'Jellyfin' : 'Plex'}: {r.ok ? 'Connected' : 'Failed'}
                         </Text>
                         {!r.ok && r.error && (
                           <Text size="xs" c="dimmed">{r.error}</Text>
@@ -357,23 +380,6 @@ export default function Onboarding({ onComplete }: Props) {
                       </Alert>
                     );
                   })}
-                  {mediaServer === 'jellyfin' && testResult.tunarr?.ok && (
-                    <Alert
-                      color={jellyfinSources.length ? 'green' : 'red'}
-                      icon={jellyfinSources.length ? <IconCheck size={16} /> : <IconAlertTriangle size={16} />}
-                      p="xs"
-                    >
-                      <Text size="sm" fw={600}>
-                        Jellyfin: {jellyfinSources.length ? `found in Tunarr (${jellyfinSources.map((s) => s.name).join(', ')})` : 'not found in Tunarr'}
-                      </Text>
-                      {!jellyfinSources.length && (
-                        <Text size="xs" c="dimmed">
-                          Tunarr is reachable but has no Jellyfin source. Add your Jellyfin server in Tunarr
-                          (Settings → Sources), let it scan, then test again.
-                        </Text>
-                      )}
-                    </Alert>
-                  )}
                 </Stack>
               )}
 

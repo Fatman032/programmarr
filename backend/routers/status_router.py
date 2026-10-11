@@ -67,7 +67,7 @@ def load_config() -> dict:
         return {}
 
 
-def probe(url: str, tunarr: bool = False) -> dict:
+def probe(url: str, tunarr: bool = False, headers: dict | None = None, who: str = "Plex") -> dict:
     """Reach a URL and judge whether it actually answered usefully.
 
     An HTTP error is NOT success. This used to return ok:True for any response
@@ -75,7 +75,7 @@ def probe(url: str, tunarr: bool = False) -> dict:
     before Tunarr had auth, actively misleading now that it does.
     """
     try:
-        headers = channel_engine.tunarr_headers() if tunarr else {}
+        headers = channel_engine.tunarr_headers() if tunarr else (headers or {})
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=5) as r:
             return {"ok": True, "status": r.status}
@@ -83,22 +83,11 @@ def probe(url: str, tunarr: bool = False) -> dict:
         if e.code in (401, 403):
             hint = ("Tunarr requires a username and password — set them in "
                     "Settings -> Connections.") if tunarr else \
-                   "Plex rejected the token."
+                   ("Jellyfin rejected the API key." if who == "Jellyfin" else "Plex rejected the token.")
             return {"ok": False, "status": e.code, "error": f"Authentication failed ({e.code}). {hint}"}
         return {"ok": False, "status": e.code, "error": f"HTTP {e.code} from {url}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
-
-
-def tunarr_sources(url: str) -> list:
-    """The media sources Tunarr is fed from, as [{type, name, uri}] — enough to tell a Plex
-    setup from a Jellyfin one. Nothing secret: the source's user/token fields are left out.
-    Uses whatever Tunarr credentials are currently set on the engine."""
-    sources = channel_engine.api(url.rstrip("/"), "GET", "/api/media-sources")
-    if not isinstance(sources, list):
-        return []
-    return [{"type": s.get("type"), "name": s.get("name"), "uri": s.get("uri")}
-            for s in sources if isinstance(s, dict)]
 
 
 def check_tunarr(url: str, username: str = "", password: str = "") -> dict:
@@ -114,13 +103,30 @@ def check_tunarr(url: str, username: str = "", password: str = "") -> dict:
     try:
         channel_engine.set_tunarr_auth(username, password)
         result = {**probe(f"{url}/api/channels", tunarr=True), "url": url}
-        if result.get("ok"):
-            result["sources"] = tunarr_sources(url)  # so the wizard can tell Plex from Jellyfin
     finally:
         # Never let a connection test leave the process authenticated as
         # whatever was being tried.
         channel_engine._TUNARR_AUTH = prior
     return result
+
+
+def jellyfin_headers(api_key: str) -> dict:
+    return {"Authorization": f'MediaBrowser Token="{api_key}"', "X-Emby-Token": api_key,
+            "Accept": "application/json"}
+
+
+def check_jellyfin(url: str, api_key: str) -> dict:
+    """Test a Jellyfin URL + API key (BETA) — the counterpart of check_plex.
+
+    /System/Info needs a valid key (the /Public variant answers anyone), so a green result
+    vouches for the key itself.
+    """
+    url = (url or "").rstrip("/")
+    if not url:
+        return {"ok": False, "error": "No Jellyfin URL given"}
+    if not api_key:
+        return {"ok": False, "error": "No Jellyfin API key given"}
+    return {**probe(f"{url}/System/Info", headers=jellyfin_headers(api_key), who="Jellyfin"), "url": url}
 
 
 def check_plex(url: str, token: str) -> dict:
@@ -168,11 +174,16 @@ def get_status():
             # Surfaced so a bug report can state it without the user digging —
             # the issue template asks for it.
             tr["version"] = channel_engine.get_tunarr_version(tunarr)
-            tr["sources"] = tunarr_sources(tunarr)
     if plex and token:
         pr = {**probe(f"{plex}/?X-Plex-Token={token}"), "url": plex}
 
-    return {"tunarr": tr, "plex": pr,
+    jellyfin = cfg.get("jellyfin_url", "").rstrip("/")
+    jellyfin_key = cfg.get("jellyfin_api_key", "")
+    jr = {"ok": False, "error": "Not configured", "url": jellyfin}
+    if jellyfin and jellyfin_key:
+        jr = check_jellyfin(jellyfin, jellyfin_key)
+
+    return {"tunarr": tr, "plex": pr, "jellyfin": jr,
             "media_server": "jellyfin" if cfg.get("media_server") == "jellyfin" else "plex"}
 
 
@@ -182,6 +193,8 @@ class ConnectionTest(BaseModel):
     tunarr_password: str = ""
     plex_url: str = ""
     plex_token: str = ""
+    jellyfin_url: str = ""
+    jellyfin_api_key: str = ""
 
 
 @router.post("/test-connection")
@@ -202,12 +215,17 @@ def test_connection(body: ConnectionTest):
     plex_token = body.plex_token
     if plex_token == MASK:
         plex_token = cfg.get("plex_token", "")
+    jellyfin_key = body.jellyfin_api_key
+    if jellyfin_key == MASK:
+        jellyfin_key = cfg.get("jellyfin_api_key", "")
 
     out = {}
     if body.tunarr_url:
         out["tunarr"] = check_tunarr(body.tunarr_url, body.tunarr_username, tunarr_pw)
     if body.plex_url or plex_token:
         out["plex"] = check_plex(body.plex_url, plex_token)
+    if body.jellyfin_url or jellyfin_key:
+        out["jellyfin"] = check_jellyfin(body.jellyfin_url, jellyfin_key)
     return out
 
 

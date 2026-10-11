@@ -31,9 +31,11 @@ class ConfigModel(BaseModel):
     # Whether the app polls GitHub for a newer release (the in-app update banner).
     # Default on; stored explicitly so the falsy-prune below can't drop a False.
     update_check_enabled: bool = True
-    # Which media server Tunarr is fed by: "" / "plex" (the default) or "jellyfin" (BETA).
-    # A Jellyfin setup needs no Plex address or token.
+    # Which media server feeds Tunarr: "" / "plex" (the default) or "jellyfin" (BETA).
+    # Each needs its own address + key, the same way: Plex URL + token, Jellyfin URL + API key.
     media_server: str = ""
+    jellyfin_url: str = ""
+    jellyfin_api_key: str = ""
 
 
 def _path() -> Path:
@@ -55,6 +57,8 @@ def get_config():
         config["auth_password"] = MASK
     if config.get("plex_token"):
         config["plex_token"] = MASK
+    if config.get("jellyfin_api_key"):
+        config["jellyfin_api_key"] = MASK
     if config.get("tmdb_api_key"):
         config["tmdb_api_key"] = MASK
     if config.get("tunarr_password"):
@@ -71,7 +75,7 @@ def get_config():
 def save_config(config: ConfigModel):
     existing = load_config()
     data = config.model_dump()
-    for field in ("auth_password", "plex_token", "tmdb_api_key", "tunarr_password"):
+    for field in ("auth_password", "plex_token", "tmdb_api_key", "tunarr_password", "jellyfin_api_key"):
         if data.get(field) == MASK:
             data[field] = existing.get(field, "")
     # Lists must bypass the falsy-prune below ([] is falsy but meaningful as "no change").
@@ -130,10 +134,11 @@ def config_status():
     has_plex = bool(config.get("plex_servers")) or bool(
         config.get("plex_url") and config.get("plex_token")
     )
+    has_jellyfin = bool(config.get("jellyfin_url") and config.get("jellyfin_api_key"))
     media_server = "jellyfin" if config.get("media_server") == "jellyfin" else "plex"
     return {
-        # Plex is only required when Plex is the media server.
-        "configured": bool(config.get("tunarr_url") and (has_plex or media_server == "jellyfin")),
+        # Tunarr plus the chosen media server's address + key — the same rule for both.
+        "configured": bool(config.get("tunarr_url") and (has_jellyfin if media_server == "jellyfin" else has_plex)),
         "media_server": media_server,
         "has_tmdb": bool(config.get("tmdb_api_key")),
         "has_auth": bool(config.get("auth_username") and config.get("auth_password")),
