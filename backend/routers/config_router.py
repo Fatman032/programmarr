@@ -31,9 +31,8 @@ class ConfigModel(BaseModel):
     # Whether the app polls GitHub for a newer release (the in-app update banner).
     # Default on; stored explicitly so the falsy-prune below can't drop a False.
     update_check_enabled: bool = True
-    # Which media server feeds Tunarr: "" / "plex" (the default) or "jellyfin" (BETA).
-    # Each needs its own address + key, the same way: Plex URL + token, Jellyfin URL + API key.
-    media_server: str = ""
+    # Jellyfin (BETA), next to Plex: a URL + API key the way Plex has a URL + token. Use Plex,
+    # Jellyfin, or both — whichever pairs are filled in are the servers Programmarr talks to.
     jellyfin_url: str = ""
     jellyfin_api_key: str = ""
 
@@ -122,6 +121,8 @@ def save_config(config: ConfigModel):
             primary["token"] = token
         merged["plex_servers"] = [primary] + merged["plex_servers"][1:]
     merged["update_check_enabled"] = update_check
+    # The old one-or-the-other switch: replaced by "whichever servers are filled in".
+    merged.pop("media_server", None)
     # Preserve old channel_blocks key silently (don't crash; just ignore it).
     with open(_path(), "w") as f:
         json.dump(merged, f, indent=4)
@@ -135,11 +136,10 @@ def config_status():
         config.get("plex_url") and config.get("plex_token")
     )
     has_jellyfin = bool(config.get("jellyfin_url") and config.get("jellyfin_api_key"))
-    media_server = "jellyfin" if config.get("media_server") == "jellyfin" else "plex"
     return {
-        # Tunarr plus the chosen media server's address + key — the same rule for both.
-        "configured": bool(config.get("tunarr_url") and (has_jellyfin if media_server == "jellyfin" else has_plex)),
-        "media_server": media_server,
+        # Tunarr plus at least one media server (Plex, Jellyfin, or both) with its address + key.
+        "configured": bool(config.get("tunarr_url") and (has_plex or has_jellyfin)),
+        "servers": [name for name, on in (("plex", has_plex), ("jellyfin", has_jellyfin)) if on],
         "has_tmdb": bool(config.get("tmdb_api_key")),
         "has_auth": bool(config.get("auth_username") and config.get("auth_password")),
     }

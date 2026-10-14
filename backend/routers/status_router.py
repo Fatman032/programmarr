@@ -183,8 +183,9 @@ def get_status():
     if jellyfin and jellyfin_key:
         jr = check_jellyfin(jellyfin, jellyfin_key)
 
-    return {"tunarr": tr, "plex": pr, "jellyfin": jr,
-            "media_server": "jellyfin" if cfg.get("media_server") == "jellyfin" else "plex"}
+    # Which media servers are set up (Plex, Jellyfin, or both) — the screens show a card for each.
+    servers = [name for name, on in (("plex", bool(plex and token)), ("jellyfin", bool(jellyfin and jellyfin_key))) if on]
+    return {"tunarr": tr, "plex": pr, "jellyfin": jr, "servers": servers}
 
 
 class ConnectionTest(BaseModel):

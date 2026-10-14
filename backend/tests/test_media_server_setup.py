@@ -1,9 +1,10 @@
-"""test_media_server_setup.py — Jellyfin (beta) is set up exactly like Plex.
+"""test_media_server_setup.py — set up Plex, Jellyfin (beta), or both.
 
-With Plex the wizard asks for a Plex URL + token, tests them against Plex, and you're set up once
-Tunarr and Plex are both filled in. Jellyfin works the same way with its own pair: a Jellyfin URL +
-API key, tested against Jellyfin, and set up once Tunarr and Jellyfin are both filled in.
-`media_server` ("plex", the default, or "jellyfin") says which pair applies. Nothing changes for Plex.
+Plex is a URL + token, tested against Plex; Jellyfin is a URL + API key, tested against Jellyfin.
+Fill in either pair, or both: you're set up once Tunarr and at least one server are filled in, and
+everything that talks to a media server talks to whichever ones are set up. (This replaced an
+earlier one-or-the-other switch, `media_server`, which is now ignored and cleaned out on save.)
+Nothing changes for a Plex-only setup.
 """
 
 import json
@@ -33,43 +34,56 @@ def cfg(tmp_path, monkeypatch):
     return holder
 
 
-JF = {"tunarr_url": "http://t", "media_server": "jellyfin", "jellyfin_url": "http://jf:8096", "jellyfin_api_key": "KEY"}
+PLEX = {"plex_url": "http://p", "plex_token": "x"}
+JFP = {"jellyfin_url": "http://jf:8096", "jellyfin_api_key": "KEY"}
+JF = {"tunarr_url": "http://t", **JFP}
 
 
-# ── "configured": Tunarr + the chosen server's address and key ──────────────────────
+# ── "configured": Tunarr + at least one server's address and key ────────────────────
 
-def test_a_plex_setup_still_needs_tunarr_and_plex(cfg):
-    cfg.write({"tunarr_url": "http://t"})
-    assert config_router.config_status()["configured"] is False
-    cfg.write({"tunarr_url": "http://t", "plex_url": "http://p", "plex_token": "x"})
+def test_plex_only_is_configured(cfg):
+    cfg.write({"tunarr_url": "http://t", **PLEX})
     status = config_router.config_status()
-    assert status["configured"] is True and status["media_server"] == "plex"
+    assert status["configured"] is True and status["servers"] == ["plex"]
 
 
-def test_a_jellyfin_setup_needs_tunarr_and_jellyfin_url_and_key(cfg):
+def test_jellyfin_only_is_configured(cfg):
     cfg.write(JF)
     status = config_router.config_status()
-    assert status["configured"] is True and status["media_server"] == "jellyfin"
+    assert status["configured"] is True and status["servers"] == ["jellyfin"]
 
 
-@pytest.mark.parametrize("missing", ["tunarr_url", "jellyfin_url", "jellyfin_api_key"])
-def test_a_jellyfin_setup_missing_any_piece_is_not_configured(cfg, missing):
+def test_both_are_configured_together(cfg):
+    cfg.write({**JF, **PLEX})
+    status = config_router.config_status()
+    assert status["configured"] is True and status["servers"] == ["plex", "jellyfin"]
+
+
+def test_tunarr_alone_is_not_configured(cfg):
+    cfg.write({"tunarr_url": "http://t"})
+    assert config_router.config_status()["configured"] is False
+
+
+@pytest.mark.parametrize("missing", ["jellyfin_url", "jellyfin_api_key"])
+def test_half_a_jellyfin_pair_does_not_count(cfg, missing):
     cfg.write({k: v for k, v in JF.items() if k != missing})
+    status = config_router.config_status()
+    assert status["configured"] is False and status["servers"] == []
+
+
+def test_a_server_without_tunarr_is_not_configured(cfg):
+    cfg.write(JFP)
     assert config_router.config_status()["configured"] is False
 
 
-def test_a_plex_pair_does_not_count_for_a_jellyfin_setup(cfg):
-    cfg.write({"tunarr_url": "http://t", "media_server": "jellyfin", "plex_url": "http://p", "plex_token": "x"})
-    assert config_router.config_status()["configured"] is False
+def test_the_old_switch_is_ignored(cfg):
+    """A config saved by the earlier one-or-the-other version still works by its filled-in pairs."""
+    cfg.write({**JF, **PLEX, "media_server": "jellyfin"})
+    assert config_router.config_status()["servers"] == ["plex", "jellyfin"]
 
 
-def test_a_jellyfin_pair_does_not_count_for_a_plex_setup(cfg):
-    cfg.write({"tunarr_url": "http://t", "jellyfin_url": "http://jf", "jellyfin_api_key": "k"})
-    assert config_router.config_status()["configured"] is False
-
-
-def test_no_config_at_all_is_plex_and_not_configured(cfg):
-    assert config_router.config_status() == {"configured": False, "media_server": "plex", "has_tmdb": False, "has_auth": False}
+def test_no_config_at_all_is_not_configured(cfg):
+    assert config_router.config_status() == {"configured": False, "servers": [], "has_tmdb": False, "has_auth": False}
 
 
 # ── the key is hidden and kept, like the Plex token ─────────────────────────────────
@@ -81,24 +95,30 @@ def test_the_api_key_is_never_sent_back_to_the_screen(cfg):
 
 def test_saving_with_the_masked_key_keeps_the_real_one(cfg):
     cfg.write(JF)
-    config_router.save_config(config_router.ConfigModel(tunarr_url="http://t", media_server="jellyfin",
-                                                        jellyfin_url="http://jf:8096", jellyfin_api_key=MASK))
+    config_router.save_config(config_router.ConfigModel(tunarr_url="http://t", jellyfin_url="http://jf:8096",
+                                                        jellyfin_api_key=MASK))
     assert cfg.read()["jellyfin_api_key"] == "KEY"
 
 
-def test_the_wizard_save_stores_the_jellyfin_pair_and_no_plex_fields(cfg):
-    config_router.save_config(config_router.ConfigModel(**JF))
+def test_saving_both_keeps_both_pairs(cfg):
+    config_router.save_config(config_router.ConfigModel(tunarr_url="http://t", **PLEX, **JFP))
     saved = cfg.read()
-    assert saved["media_server"] == "jellyfin" and saved["jellyfin_url"] == "http://jf:8096"
-    assert saved["jellyfin_api_key"] == "KEY" and "plex_url" not in saved and "plex_token" not in saved
-    assert config_router.config_status()["configured"] is True
+    assert saved["plex_url"] == "http://p" and saved["jellyfin_url"] == "http://jf:8096"
+    assert config_router.config_status()["servers"] == ["plex", "jellyfin"]
 
 
-def test_switching_back_to_plex_clears_the_choice(cfg):
-    cfg.write(JF)
-    config_router.save_config(config_router.ConfigModel(tunarr_url="http://t", plex_url="http://p", plex_token="tok"))
+def test_clearing_one_pair_leaves_the_other(cfg):
+    cfg.write({**JF, **PLEX})
+    config_router.save_config(config_router.ConfigModel(tunarr_url="http://t", **PLEX))  # Jellyfin fields left blank
+    saved = cfg.read()
+    assert "jellyfin_url" not in saved and saved["plex_url"] == "http://p"
+    assert config_router.config_status()["servers"] == ["plex"]
+
+
+def test_a_save_cleans_out_the_old_switch(cfg):
+    cfg.write({**JF, "media_server": "jellyfin"})
+    config_router.save_config(config_router.ConfigModel(tunarr_url="http://t", **JFP))
     assert "media_server" not in cfg.read()
-    assert config_router.config_status()["media_server"] == "plex"
 
 
 # ── the Jellyfin connection check ───────────────────────────────────────────────────
@@ -173,11 +193,30 @@ def test_the_dashboard_status_checks_jellyfin(cfg, jellyfin, monkeypatch):
                         {"ok": (headers or {}).get("X-Emby-Token") == "GOOD" or tunarr})
     monkeypatch.setattr(channel_engine, "get_tunarr_version", lambda url: "2026.10.1")
     out = status_router.get_status()
-    assert out["media_server"] == "jellyfin" and out["jellyfin"]["ok"] is True
+    assert out["servers"] == ["jellyfin"] and out["jellyfin"]["ok"] is True
     assert out["plex"] == {"ok": False, "error": "Not configured", "url": ""}
 
 
 def test_without_jellyfin_settings_the_dashboard_says_not_configured(cfg, monkeypatch):
-    cfg.write({"tunarr_url": "", "media_server": "jellyfin"})
+    cfg.write({"tunarr_url": ""})
     monkeypatch.setattr(status_router, "load_config", lambda: cfg.read())
-    assert status_router.get_status()["jellyfin"] == {"ok": False, "error": "Not configured", "url": ""}
+    out = status_router.get_status()
+    assert out["jellyfin"] == {"ok": False, "error": "Not configured", "url": ""} and out["servers"] == []
+
+
+def test_the_dashboard_checks_both_when_both_are_set_up(cfg, jellyfin, monkeypatch):
+    cfg.write({**JF, **PLEX, "jellyfin_api_key": "GOOD"})
+    monkeypatch.setattr(status_router, "load_config", lambda: cfg.read())
+    monkeypatch.setattr(status_router, "probe", lambda url, tunarr=False, headers=None, who="Plex":
+                        {"ok": tunarr or "X-Plex-Token=x" in url or (headers or {}).get("X-Emby-Token") == "GOOD"})
+    monkeypatch.setattr(channel_engine, "get_tunarr_version", lambda url: "2026.10.1")
+    out = status_router.get_status()
+    assert out["servers"] == ["plex", "jellyfin"] and out["plex"]["ok"] and out["jellyfin"]["ok"]
+
+
+def test_the_connection_test_checks_both_when_both_are_given(cfg, jellyfin, monkeypatch):
+    monkeypatch.setattr(status_router, "check_tunarr", lambda url, u="", p="": {"ok": True, "url": url})
+    monkeypatch.setattr(status_router, "check_plex", lambda url, token: {"ok": True, "url": url})
+    out = status_router.test_connection(status_router.ConnectionTest(
+        tunarr_url="http://t", plex_url="http://p", plex_token="x", jellyfin_url="http://jf:8096", jellyfin_api_key="GOOD"))
+    assert out["tunarr"]["ok"] and out["plex"]["ok"] and out["jellyfin"]["ok"]

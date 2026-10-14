@@ -10,7 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useMediaServer } from '../api/mediaServer';
+import { useMediaServers } from '../api/mediaServer';
 import { AmbiguousChoice, api, buildCommercials, Channel, ChannelNotice, ChannelReview, ChannelSyncState, commercialListIds, ContentItem, FillerList, FranchiseRef, isCollectionRef, isMatchRef, isRuleRef, LibraryMatch, RecipeMatch, RuleValue, ruleFromText, TunarrChannel } from '../api/client';
 
 function syncedAgo(iso?: string): string {
@@ -241,7 +241,9 @@ function ChannelModal({
   const [looking, setLooking] = useState(false);
   // The Add box: a kind (blank = plain title), movies or TV shows for a rule, and the value.
   const [addType, setAddType] = useState<string | null>(null);
-  const { name: serverName, isJellyfin } = useMediaServer();
+  // Live rules and collections ask Plex; a Jellyfin-only setup (beta) doesn't have them yet.
+  const { hasPlex } = useMediaServers();
+  const isJellyfin = !hasPlex;
   const [addKind, setAddKind] = useState<'movie' | 'show'>('movie');
   // What Plex has for the chosen rule (a pick-list). null = not loaded or Plex unreachable -> type it instead.
   const [ruleChoices, setRuleChoices] = useState<RuleValue[] | null>(null);
@@ -623,7 +625,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
               searchable
               clearable
               limit={100}
-              nothingFoundMessage={`Nothing like that in ${serverName}`}
+              nothingFoundMessage="Nothing like that in Plex"
               style={{ flex: 1 }}
               size="sm"
             />
@@ -632,7 +634,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
               placeholder={
                 addType === 'collection' ? 'Collection name'
                   : addType === 'movie' || addType === 'show' ? 'Title'
-                  : isRuleType ? (choicesFailed ? `${serverName} could not be read — type it exactly` : `Loading from ${serverName}…`)
+                  : isRuleType ? (choicesFailed ? 'Plex could not be read — type it exactly' : 'Loading from Plex…')
                   : 'Title (or {genre: Animation} and the like)'
               }
               value={newItem}

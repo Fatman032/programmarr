@@ -14,10 +14,10 @@ export const api = {
   saveConfig: (data: Record<string, any>) =>
     req('/config', { method: 'POST', body: JSON.stringify(data) }),
   getConfigStatus: () =>
-    req<{ configured: boolean; has_tmdb: boolean; has_auth: boolean; media_server?: 'plex' | 'jellyfin' }>('/config/status'),
+    req<{ configured: boolean; has_tmdb: boolean; has_auth: boolean; servers?: ('plex' | 'jellyfin')[] }>('/config/status'),
 
   getStatus: () =>
-    req<{ tunarr: ConnStatus; plex: ConnStatus; jellyfin?: ConnStatus; media_server?: 'plex' | 'jellyfin' }>('/status'),
+    req<{ tunarr: ConnStatus; plex: ConnStatus; jellyfin?: ConnStatus; servers?: ('plex' | 'jellyfin')[] }>('/status'),
   // Tests credentials the user has typed but not yet saved — onboarding needs to
   // validate before writing, or a typo'd URL produces a green "Setup complete".
   testConnection: (data: {

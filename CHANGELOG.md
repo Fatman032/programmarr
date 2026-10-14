@@ -18,16 +18,16 @@ All notable changes to Programmarr are documented here. This project follows
   finds the same movie on another through its TMDB/IMDB numbers, and a movie TMDB doesn't list but
   IMDB does is now matched by IMDB.
 
-- **Set up with Jellyfin, the same way as Plex (BETA).** The setup wizard counted you as set up only
-  with a Tunarr URL AND a Plex URL + token, which left anyone on Jellyfin stuck. The Connect step now
-  asks which media server feeds Tunarr (**Plex** or **Jellyfin (beta)**). Jellyfin asks for a
-  **Jellyfin URL + API key** where Plex asks for its URL + token, and tests them against Jellyfin
-  (`/System/Info`, which needs a valid key, so a green result vouches for the key). You're set up once
-  Tunarr and the chosen server are both filled in. Settings has the same fields (the key is hidden like
-  the Plex token), and the Dashboard checks Jellyfin like it checks Plex. Plex setups are unchanged.
-  Stored as `media_server`, `jellyfin_url`, `jellyfin_api_key` in config.json.
-- **Export/Scan and the library picker read Jellyfin (BETA)**, the same four steps as with Plex: list the
-  server's movie and TV libraries, read every movie and show with the same details (genres, studios,
+- **Set up Plex, Jellyfin (BETA), or both.** The setup wizard counted you as set up only with a Tunarr URL
+  AND a Plex URL + token, which left anyone on Jellyfin stuck. The Connect step now has **I use Plex** and
+  **I use Jellyfin (beta)**: tick one or both. Jellyfin asks for a **Jellyfin URL + API key** the way Plex
+  asks for a URL + token, and the test checks it against Jellyfin itself (`/System/Info`, which needs a
+  valid key). You're set up once Tunarr and at least one server are filled in. Settings shows both
+  sections (fill in either or both; the key is hidden like the Plex token), and the Dashboard shows a
+  card for each server you've set up. Plex-only setups are unchanged. Stored as `jellyfin_url` and
+  `jellyfin_api_key` in config.json.
+- **Export/Scan and the library picker read Jellyfin (BETA)** — and both servers, when you use both — the
+  same four steps as with Plex: list each server's movie and TV libraries, read every movie and show with the same details (genres, studios,
   director, top-billed cast, rating, country, seasons and episodes), keep what Tunarr has synced, and
   add what only Tunarr has. The CSV and the Planner work as before. Jellyfin has no Mood/Style tags, so
   those Planner channels stay Plex-only.

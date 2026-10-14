@@ -146,7 +146,7 @@ function LiveRecipesCard({ status, onChange }: { status: RecipesStatus; onChange
 
 export default function Dashboard() {
   const nav = useNavigate();
-  const [status, setStatus] = useState<{ tunarr: ConnStatus; plex: ConnStatus; jellyfin?: ConnStatus; media_server?: 'plex' | 'jellyfin' } | null>(null);
+  const [status, setStatus] = useState<{ tunarr: ConnStatus; plex: ConnStatus; jellyfin?: ConnStatus; servers?: ('plex' | 'jellyfin')[] } | null>(null);
   const [guide, setGuide] = useState<Guide | null>(null);
   const [recipes, setRecipes] = useState<RecipesStatus | null>(null);
   const [configured, setConfigured] = useState(true);
@@ -206,9 +206,7 @@ export default function Dashboard() {
           icon={<IconSettings size={18} />}
           title="Setup required"
         >
-          {status?.media_server === 'jellyfin'
-            ? "Tunarr URL, Jellyfin URL, and Jellyfin API key aren't configured yet."
-            : "Tunarr URL, Plex URL, and Plex Token aren't configured yet."}{' '}
+          Tunarr URL and a Plex or Jellyfin connection aren't configured yet.{' '}
           <Button
             variant="subtle"
             color="orange"
@@ -228,9 +226,11 @@ export default function Dashboard() {
         </Text>
         <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <ConnectionCard label="Tunarr" status={status?.tunarr} />
-          {status?.media_server === 'jellyfin'
-            ? <ConnectionCard label="Jellyfin (beta)" status={status?.jellyfin} />
-            : <ConnectionCard label="Plex"   status={status?.plex} />}
+          {/* A card per server you've set up; with none yet, show Plex (the usual first one). */}
+          {(status?.servers?.includes('plex') || !status?.servers?.length) &&
+            <ConnectionCard label="Plex"   status={status?.plex} />}
+          {status?.servers?.includes('jellyfin') &&
+            <ConnectionCard label="Jellyfin (beta)" status={status?.jellyfin} />}
         </SimpleGrid>
       </Box>
 

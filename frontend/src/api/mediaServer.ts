@@ -1,29 +1,37 @@
-// Which media server feeds Tunarr — Plex (the default) or Jellyfin (beta) — so a screen can name
-// the server you actually use instead of always saying "Plex".
+// Which media servers are set up — Plex, Jellyfin (beta), or both — so a screen can name the
+// server(s) you actually use, and leave out what a server you don't have would need.
 import { useEffect, useState } from 'react';
 import { api } from './client';
 
 export type MediaServer = 'plex' | 'jellyfin';
 
-let known: MediaServer | null = null;
-const listeners = new Set<(m: MediaServer) => void>();
+let known: MediaServer[] | null = null;
+const listeners = new Set<(m: MediaServer[]) => void>();
 
-/** Called after Settings saves a different choice, so every open screen updates. */
-export function setKnownMediaServer(m: MediaServer) {
+/** Called after Settings saves different servers, so every open screen updates. */
+export function setKnownMediaServers(m: MediaServer[]) {
   known = m;
   listeners.forEach((fn) => fn(m));
 }
 
-export function useMediaServer(): { server: MediaServer; name: string; isJellyfin: boolean } {
-  const [server, setServer] = useState<MediaServer>(known ?? 'plex');
+export function useMediaServers(): {
+  servers: MediaServer[];
+  hasPlex: boolean;
+  hasJellyfin: boolean;
+  /** "Plex", "Jellyfin", or "Plex and Jellyfin" */
+  name: string;
+} {
+  // Until the answer arrives, assume Plex: that's what an existing install has.
+  const [servers, setServers] = useState<MediaServer[]>(known ?? ['plex']);
   useEffect(() => {
-    listeners.add(setServer);
+    listeners.add(setServers);
     if (!known) {
-      api.getConfigStatus()
-        .then((s) => setKnownMediaServer(s.media_server === 'jellyfin' ? 'jellyfin' : 'plex'))
-        .catch(() => {});
+      api.getConfigStatus().then((s) => setKnownMediaServers(s.servers?.length ? s.servers : ['plex'])).catch(() => {});
     }
-    return () => { listeners.delete(setServer); };
+    return () => { listeners.delete(setServers); };
   }, []);
-  return { server, name: server === 'jellyfin' ? 'Jellyfin' : 'Plex', isJellyfin: server === 'jellyfin' };
+  const hasPlex = servers.includes('plex');
+  const hasJellyfin = servers.includes('jellyfin');
+  const name = [hasPlex && 'Plex', hasJellyfin && 'Jellyfin'].filter(Boolean).join(' and ') || 'Plex';
+  return { servers, hasPlex, hasJellyfin, name };
 }

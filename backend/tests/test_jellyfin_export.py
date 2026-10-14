@@ -99,7 +99,7 @@ def _run_export(tmp_path, monkeypatch, config, *args):
         return {r["Title"]: r for r in csv.DictReader(f)}
 
 
-JF_CONFIG = {"tunarr_url": "http://t", "media_server": "jellyfin",
+JF_CONFIG = {"tunarr_url": "http://t",
              "jellyfin_url": "http://jf:8096", "jellyfin_api_key": "KEY"}
 
 
@@ -140,12 +140,12 @@ def test_the_libraries_picked_in_the_ui_are_the_ones_exported(tmp_path, monkeypa
     assert "Heat" in rows and "Cheers" not in rows
 
 
-def test_a_jellyfin_setup_without_its_url_and_key_stops_with_a_clear_message(tmp_path, monkeypatch, capsys):
+def test_a_setup_with_no_media_server_stops_with_a_clear_message(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://t", "media_server": "jellyfin"}))
+    (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://t", "jellyfin_url": "http://jf"}))  # no key
     with pytest.raises(SystemExit):
         export.load_config()
-    assert "Jellyfin connection missing" in capsys.readouterr().out
+    assert "No media server connection" in capsys.readouterr().out
 
 
 def test_the_plex_export_still_works_the_same(tmp_path, monkeypatch, tunarr):
@@ -231,11 +231,11 @@ def test_the_picker_does_not_list_the_same_jellyfin_twice_but_keeps_other_source
     assert "tunarr:fp" in keys                                    # a different server stays
 
 
-def test_the_picker_without_jellyfin_settings_says_so(picker):
-    picker["cfg"] = {"tunarr_url": "http://t", "media_server": "jellyfin"}
+def test_the_picker_without_any_server_says_so(picker):
+    picker["cfg"] = {"tunarr_url": "http://t"}
     with pytest.raises(HTTPException) as e:
         pipeline_router.list_libraries()
-    assert e.value.status_code == 400 and "Jellyfin not configured" in e.value.detail
+    assert e.value.status_code == 400 and "No Plex or Jellyfin server configured" in e.value.detail
 
 
 def test_the_picker_explains_an_unreadable_jellyfin(picker, monkeypatch):
@@ -244,3 +244,37 @@ def test_the_picker_explains_an_unreadable_jellyfin(picker, monkeypatch):
     with pytest.raises(HTTPException) as e:
         pipeline_router.list_libraries()
     assert e.value.status_code == 502 and "Could not read Jellyfin" in e.value.detail
+
+
+# ── Plex and Jellyfin together ──────────────────────────────────────────────────────
+
+BOTH = {**JF_CONFIG, "plex_url": "http://friend:32400", "plex_token": "x"}
+
+
+def test_with_both_servers_the_export_reads_both(tmp_path, monkeypatch, jellyfin, tunarr):
+    def fake_plex_get(base_url, token, path, timeout=60):
+        if path == "/library/sections":
+            return {"MediaContainer": {"Directory": [{"key": "1", "title": "Plex Movies", "type": "movie"}]}}
+        if path.startswith("/library/sections/1/all"):
+            return {"MediaContainer": {"Metadata": [
+                {"title": "Plex Only Movie", "year": 2000, "Genre": [{"tag": "Drama"}]},
+                {"title": "Heat", "year": 1995, "Genre": [{"tag": "Thriller"}]}]}}
+        return None
+    monkeypatch.setattr(export, "plex_get", fake_plex_get)
+    monkeypatch.setitem(TUNARR_PROGRAMS, "tm", TUNARR_PROGRAMS["tm"] + [{"program": {"title": "Plex Only Movie"}}])
+    rows = _run_export(tmp_path, monkeypatch, BOTH)
+    assert rows["Plex Only Movie"]["Source"] == "Plex"      # from Plex
+    assert rows["Aladdin"]["Source"] == "Jellyfin"          # from Jellyfin
+    assert rows["Cheers"]["Source"] == "Jellyfin"
+    # On both servers: listed once, from the first server read (Plex), like two Plex servers today.
+    assert rows["Heat"]["Source"] == "Plex" and rows["Heat"]["Genres"] == "Thriller"
+
+
+def test_with_both_servers_the_picker_lists_both(picker, monkeypatch):
+    picker["cfg"] = BOTH
+    monkeypatch.setattr(pipeline_router, "_plex_get", lambda url, token, path:
+                        {"MediaContainer": {"Directory": [{"key": "1", "title": "Plex Movies", "type": "movie"}]}})
+    keys = [l["key"] for l in pipeline_router.list_libraries()]
+    assert "plex:1" in keys and "jellyfin:lm" in keys and "jellyfin:ls" in keys
+    assert "tunarr:fp" not in keys  # Tunarr's copy of the same Plex
+    assert "tunarr:tm" not in keys  # Tunarr's copy of the same Jellyfin

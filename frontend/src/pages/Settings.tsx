@@ -1,6 +1,6 @@
 import {
   Alert, Box, Button, Card, Group,
-  NumberInput, PasswordInput, Select, Stack, Switch, Text, TextInput, Title,
+  NumberInput, PasswordInput, Stack, Switch, Text, TextInput, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -13,7 +13,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { setKnownMediaServer } from '../api/mediaServer';
+import { setKnownMediaServers, type MediaServer } from '../api/mediaServer';
 
 const MASK = '••••••••';
 
@@ -115,7 +115,6 @@ export default function Settings() {
     tmdb_api_key: '', auth_username: '', auth_password: '',
     tunarr_username: '', tunarr_password: '',
     update_check_enabled: true,
-    media_server: 'plex',
     jellyfin_url: '', jellyfin_api_key: '',
   });
   const [saving, setSaving] = useState(false);
@@ -141,7 +140,6 @@ export default function Settings() {
         tunarr_username: cfg.tunarr_username || '',
         tunarr_password: cfg.tunarr_password || '',
         update_check_enabled: cfg.update_check_enabled !== false,
-        media_server: cfg.media_server === 'jellyfin' ? 'jellyfin' : 'plex',
         jellyfin_url: cfg.jellyfin_url || '',
         jellyfin_api_key: cfg.jellyfin_api_key || '',
       });
@@ -179,12 +177,12 @@ export default function Settings() {
   async function save() {
     setSaving(true);
     try {
-      await api.saveConfig({
-        ...values,
-        media_server: values.media_server === 'jellyfin' ? 'jellyfin' : '',
-        channel_order: channelOrder,
-      });
-      setKnownMediaServer(values.media_server === 'jellyfin' ? 'jellyfin' : 'plex');
+      await api.saveConfig({ ...values, channel_order: channelOrder });
+      // Whichever servers now have an address + key (a saved key shows as the mask).
+      const servers: MediaServer[] = [];
+      if (values.plex_url.trim() && values.plex_token) servers.push('plex');
+      if (values.jellyfin_url.trim() && values.jellyfin_api_key) servers.push('jellyfin');
+      setKnownMediaServers(servers);
       notifications.show({
         title: 'Saved',
         message: 'Configuration updated',
@@ -227,16 +225,9 @@ export default function Settings() {
             value={isMasked(values.tunarr_password) ? '' : values.tunarr_password}
             onChange={(e) => set('tunarr_password', e.currentTarget.value || MASK)}
           />
-          <Select
-            label="Media server"
-            description="Which server feeds Tunarr. Jellyfin support is beta."
-            data={[{ value: 'plex', label: 'Plex' }, { value: 'jellyfin', label: 'Jellyfin (beta)' }]}
-            value={values.media_server}
-            onChange={(v) => set('media_server', v ?? 'plex')}
-            allowDeselect={false}
-          />
-          {values.media_server !== 'jellyfin' && (
-          <>
+          <Text size="xs" c="dimmed">
+            Fill in Plex, Jellyfin (beta), or both — whichever you use. Leave the other one blank.
+          </Text>
           <TextInput
             label="Your Plex URL"
             description="Your personal Plex server — used for playback and library export. Content from other Plex servers connected to Tunarr is included automatically."
@@ -250,12 +241,8 @@ export default function Settings() {
             value={isMasked(values.plex_token) ? '' : values.plex_token}
             onChange={(e) => set('plex_token', e.currentTarget.value || MASK)}
           />
-          </>
-          )}
-          {values.media_server === 'jellyfin' && (
-          <>
           <TextInput
-            label="Your Jellyfin URL"
+            label="Your Jellyfin URL (beta)"
             placeholder="http://192.168.1.10:8096"
             value={values.jellyfin_url}
             onChange={(e) => set('jellyfin_url', e.currentTarget.value)}
@@ -267,8 +254,6 @@ export default function Settings() {
             value={isMasked(values.jellyfin_api_key) ? '' : values.jellyfin_api_key}
             onChange={(e) => set('jellyfin_api_key', e.currentTarget.value || MASK)}
           />
-          </>
-          )}
         </Stack>
       </Card>
 

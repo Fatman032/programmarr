@@ -34,23 +34,25 @@ def load_config():
             cfg = json.load(f)
     except FileNotFoundError:
         print(f"ERROR: {CONFIG_FILE} not found.")
-        print("Create it with: tunarr_url and plex_servers (or plex_url + plex_token, "
-              "or jellyfin_url + jellyfin_api_key with media_server \"jellyfin\")")
+        print("Create it with: tunarr_url, plus Plex (plex_servers, or plex_url + plex_token) "
+              "and/or Jellyfin (jellyfin_url + jellyfin_api_key)")
         sys.exit(1)
     if not cfg.get("tunarr_url"):
         print(f"ERROR: 'tunarr_url' missing from {CONFIG_FILE}")
         sys.exit(1)
-    if cfg.get("media_server") == "jellyfin":
-        if not (cfg.get("jellyfin_url") and cfg.get("jellyfin_api_key")):
-            print("ERROR: Jellyfin connection missing — set the Jellyfin URL and API key "
-                  f"(Settings -> Connections, or jellyfin_url + jellyfin_api_key in {CONFIG_FILE})")
-            sys.exit(1)
-        return cfg
-    has_plex = cfg.get("plex_servers") or (cfg.get("plex_url") and cfg.get("plex_token"))
-    if not has_plex:
-        print(f"ERROR: Plex connection missing — set plex_servers or plex_url + plex_token in {CONFIG_FILE}")
+    if not _has_plex(cfg) and not _has_jellyfin(cfg):
+        print("ERROR: No media server connection — set up Plex (URL + token), Jellyfin (URL + API key), "
+              f"or both in Settings -> Connections ({CONFIG_FILE})")
         sys.exit(1)
     return cfg
+
+
+def _has_plex(cfg):
+    return bool(cfg.get("plex_servers") or (cfg.get("plex_url") and cfg.get("plex_token")))
+
+
+def _has_jellyfin(cfg):
+    return bool(cfg.get("jellyfin_url") and cfg.get("jellyfin_api_key"))
 
 
 def _get_plex_servers(cfg):
@@ -65,16 +67,15 @@ def _get_plex_servers(cfg):
     return [("Plex", cfg["plex_url"].rstrip("/"), cfg["plex_token"])]
 
 
-def _media_server(cfg):
-    return "jellyfin" if cfg.get("media_server") == "jellyfin" else "plex"
-
-
 def _get_servers(cfg):
-    """(name, url, key) for the configured media server(s): the Plex servers + tokens, or
-    the Jellyfin server + API key."""
-    if _media_server(cfg) == "jellyfin":
-        return [("Jellyfin", cfg["jellyfin_url"].rstrip("/"), cfg["jellyfin_api_key"])]
-    return _get_plex_servers(cfg)
+    """(kind, name, url, key) for every connected media server: the Plex server(s) + token(s)
+    and/or the Jellyfin server + API key — whichever are set up."""
+    servers = []
+    if _has_plex(cfg):
+        servers += [("plex", name, url, token) for name, url, token in _get_plex_servers(cfg)]
+    if _has_jellyfin(cfg):
+        servers.append(("jellyfin", "Jellyfin", cfg["jellyfin_url"].rstrip("/"), cfg["jellyfin_api_key"]))
+    return servers
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
@@ -449,9 +450,9 @@ def main():
 
     cfg = load_config()
     tunarr_url = cfg["tunarr_url"].rstrip("/")
-    kind = _media_server(cfg)
-    label = "Jellyfin" if kind == "jellyfin" else "Plex"
     server_list = _get_servers(cfg)
+    kinds = {kind for kind, *_ in server_list}
+    label = " and ".join(k for k in ("Plex", "Jellyfin") if k.lower() in kinds)
     multi = len(server_list) > 1
 
     # ── Discover and fetch from the media server(s) ────────────────────────────
@@ -462,7 +463,7 @@ def main():
     seen_movie_titles: set = set()
     seen_show_titles: set  = set()
 
-    for srv_idx, (srv_name, srv_url, srv_key) in enumerate(server_list):
+    for srv_idx, (kind, srv_name, srv_url, srv_key) in enumerate(server_list):
         print(f"\n  Server: {srv_name} ({srv_url})")
         sections = _sections(kind, srv_url, srv_key)
         if not sections:

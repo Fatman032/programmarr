@@ -19,7 +19,7 @@ import {
   FranchiseCandidate, DeployPreviewResult, ThemeFacet,
 } from '../api/client';
 import TerminalOutput from '../components/TerminalOutput';
-import { useMediaServer } from '../api/mediaServer';
+import { useMediaServers } from '../api/mediaServer';
 
 // Copy text to the clipboard with a fallback for insecure contexts (plain HTTP on a
 // non-localhost origin, where navigator.clipboard is undefined). Shows a notification
@@ -181,8 +181,9 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
   onNuke: () => void;
 }) {
   const [hasTmdb, setHasTmdb] = useState(false);
-  const { isJellyfin } = useMediaServer();
-  // Collections come from the media server; on Jellyfin (beta) they aren't built yet.
+  // Collections come from Plex; a Jellyfin-only setup (beta) doesn't have them yet.
+  const { hasPlex } = useMediaServers();
+  const isJellyfin = !hasPlex;
   useEffect(() => {
     if (isJellyfin && (setup.method === 'collections' || setup.includeCollections)) {
       onChange({ method: 'build', includeCollections: false });
@@ -402,7 +403,7 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
 // ── Export step ──────────────────────────────────────────────────────────────────
 
 function ExportStep({ onDone }: { onDone: () => void }) {
-  const { name: serverName } = useMediaServer();
+  const { name: serverName } = useMediaServers();
   const [libraries, setLibraries] = useState<PlexLibrary[]>([]);
   const [libSels, setLibSels] = useState<Record<string, boolean>>({});
   const [libLoading, setLibLoading] = useState(true);
@@ -1927,7 +1928,7 @@ function DiscoverStep({ discover, curatePools, onDone }: { discover: boolean; cu
 type CollectionSel = { id: string; name: string; channel_number: number; include: boolean };
 
 function CollectionsStep({ start, onDone }: { start: number; onDone: () => void }) {
-  const { name: serverName } = useMediaServer();
+  const serverName = 'Plex';  // collections come from Plex
   const [collections, setCollections] = useState<PlexCollection[]>([]);
   const [selections, setSelections] = useState<CollectionSel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2061,9 +2062,10 @@ function DeployStep({ setup }: { setup: SetupState }) {
 
   const [config, setConfig] = useState<Record<string, string>>({});
   useEffect(() => { api.getConfig().then(setConfig).catch(() => {}); }, []);
-  // Jellyfin (beta): there's no automatic Live TV sync yet, so the Plex sync step is skipped and
-  // the summary shows the one-time Jellyfin Live TV steps instead.
-  const isJellyfin = config.media_server === 'jellyfin';
+  // Which servers get the channels. Plex: synced automatically (after its one-time DVR setup).
+  // Jellyfin (beta): no automatic sync yet, so the summary shows its one-time Live TV steps.
+  const hasPlex = !!((config.plex_url && config.plex_token) || (config as any).plex_servers?.length);
+  const hasJellyfin = !!(config.jellyfin_url && config.jellyfin_api_key);
 
   const isEditMode = setup.mode === 'edit';
   const protectedNums = setup.protectedNums;
@@ -2189,8 +2191,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
       setArtStatus('skip');
     }
 
-    // 3) Sync (Plex only — Jellyfin's Live TV is set up by hand for now, see the summary)
-    if (isJellyfin) {
+    // 3) Sync Plex (Jellyfin's Live TV is set up by hand for now, see the summary)
+    if (!hasPlex) {
       setSyncStatus('skip');
     } else {
       setPhase('sync'); setSyncStatus('running'); setSyncLines([]);
@@ -2259,7 +2261,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
           {deployOk && <Collapse in={showArt}><Box mb="md"><TerminalOutput lines={artLines} done success={artStatus === 'ok'} height={180} /></Box></Collapse>}
 
           {/* Jellyfin (beta): no automatic Live TV sync yet — the one-time steps, with the addresses to paste. */}
-          {deployOk && isJellyfin && (
+          {deployOk && hasJellyfin && (
             <Alert color="yellow" variant="light" icon={<IconAlertCircle size={18} />} mb="md"
               title="One more step — add your channels to Jellyfin Live TV">
               <Text size="sm" mb="xs">
@@ -2411,7 +2413,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
                 <>
                   <StatusRow status={phase === 'deploying' ? 'running' : 'ok'} label="Applying surgical diff to Tunarr" />
                   {setup.fetchArt && <StatusRow status={phase === 'art' ? 'running' : phase === 'sync' ? 'ok' : 'pending'} label="Fetching channel art" />}
-                  <StatusRow status={isJellyfin ? 'skip' : phase === 'sync' ? 'running' : 'pending'} label={isJellyfin ? 'Jellyfin Live TV — one-time steps at the end' : 'Syncing with Plex'} />
+                  {hasPlex && <StatusRow status={phase === 'sync' ? 'running' : 'pending'} label="Syncing with Plex" />}{hasJellyfin && <StatusRow status="skip" label="Jellyfin Live TV — one-time steps at the end" />}
                   <TerminalOutput
                     lines={phase === 'deploying' ? deployLines : phase === 'art' ? artLines : syncLines}
                     done={false} success height={200} />
@@ -2487,8 +2489,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
           )}
           <Card withBorder p="lg">
             <Text size="sm" c="dimmed" mb="md">
-              Deploying writes to Tunarr now.{isJellyfin
-                ? `${setup.fetchArt ? ' Channel art is fetched right after; then' : ' Then'} you add the channels to Jellyfin Live TV once (the steps are shown at the end).`
+              Deploying writes to Tunarr now.{hasJellyfin
+                ? `${setup.fetchArt ? ' Channel art is fetched right after.' : ''}${hasPlex ? ' Plex sync runs automatically.' : ''} Then you add the channels to Jellyfin Live TV once (the steps are shown at the end).`
                 : `${setup.fetchArt ? ' Channel art and' : ''} Plex sync run automatically right after.`}
             </Text>
 
@@ -2545,7 +2547,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
               <Stack gap="xs" mb="md">
                 <StatusRow status={phase === 'deploying' ? 'running' : 'ok'} label="Deploying to Tunarr" />
                 {setup.fetchArt && <StatusRow status={phase === 'art' ? 'running' : phase === 'sync' ? 'ok' : 'pending'} label="Fetching channel art" />}
-                <StatusRow status={isJellyfin ? 'skip' : phase === 'sync' ? 'running' : 'pending'} label={isJellyfin ? 'Jellyfin Live TV — one-time steps at the end' : 'Syncing with Plex'} />
+                {hasPlex && <StatusRow status={phase === 'sync' ? 'running' : 'pending'} label="Syncing with Plex" />}{hasJellyfin && <StatusRow status="skip" label="Jellyfin Live TV — one-time steps at the end" />}
                 <TerminalOutput
                   lines={phase === 'deploying' ? deployLines : phase === 'art' ? artLines : syncLines}
                   done={false} success height={200} />

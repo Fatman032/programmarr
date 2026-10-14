@@ -188,59 +188,70 @@ class ExportOptions(BaseModel):
 
 @router.get("/pipeline/libraries")
 def list_libraries():
+    """The libraries Export/Scan can read: each connected media server's own movie and TV
+    libraries — Plex sections ("plex:{key}") and/or Jellyfin libraries ("jellyfin:{id}", beta) —
+    then the libraries of every other Tunarr source ("tunarr:{id}")."""
     cfg = _load_config()
     tunarr_url = cfg.get("tunarr_url", "").rstrip("/")
     channel_engine.set_tunarr_auth_from_config(cfg)
-    if cfg.get("media_server") == "jellyfin":
-        return _list_jellyfin_libraries(cfg, tunarr_url)
-    plex_url   = cfg.get("plex_url", "").rstrip("/").lower()
+    plex_url   = cfg.get("plex_url", "").rstrip("/")
     plex_token = cfg.get("plex_token", "")
-    if not plex_url or not plex_token:
-        raise HTTPException(400, "Plex not configured")
+    jf_url     = cfg.get("jellyfin_url", "").rstrip("/")
+    jf_key     = cfg.get("jellyfin_api_key", "")
+    has_plex, has_jf = bool(plex_url and plex_token), bool(jf_url and jf_key)
+    if not has_plex and not has_jf:
+        raise HTTPException(400, "No Plex or Jellyfin server configured")
 
     result = []
-    plex_error = ""
+    errors = []
 
-    # ── Primary Plex sections (via Plex API, key prefixed "plex:") ─────────────
-    srv_name = (cfg.get("plex_servers") or [{}])[0].get("name", "Your Library")
-    try:
-        data = _plex_get(plex_url, plex_token, "/library/sections")
-        for s in data["MediaContainer"].get("Directory", []):
-            if s.get("type") not in ("movie", "show"):
-                continue
-            result.append({"key": f"plex:{s['key']}", "title": s["title"],
-                            "type": s["type"], "server": srv_name})
-    except urllib.error.HTTPError as e:
-        plex_error = (f"Plex rejected the token ({e.code}) — check plex_token in Settings."
-                      if e.code in (401, 403) else f"Plex returned HTTP {e.code}.")
-    except Exception as e:
-        # Was `pass` with a comment claiming the UI shows the error elsewhere; it
-        # doesn't — the user just got an empty picker with no explanation.
-        plex_error = f"Could not reach Plex at {plex_url}: {e}"
+    # ── Plex sections (via Plex API, key prefixed "plex:") ─────────────────────
+    if has_plex:
+        srv_name = (cfg.get("plex_servers") or [{}])[0].get("name", "Your Library")
+        try:
+            data = _plex_get(plex_url, plex_token, "/library/sections")
+            for s in data["MediaContainer"].get("Directory", []):
+                if s.get("type") not in ("movie", "show"):
+                    continue
+                result.append({"key": f"plex:{s['key']}", "title": s["title"],
+                                "type": s["type"], "server": srv_name})
+        except urllib.error.HTTPError as e:
+            errors.append(f"Plex rejected the token ({e.code}) — check plex_token in Settings."
+                          if e.code in (401, 403) else f"Plex returned HTTP {e.code}.")
+        except Exception as e:
+            # Was `pass` with a comment claiming the UI shows the error elsewhere; it
+            # doesn't — the user just got an empty picker with no explanation.
+            errors.append(f"Could not reach Plex at {plex_url}: {e}")
+
+    # ── Jellyfin libraries (BETA, via Jellyfin API, key prefixed "jellyfin:") ──
+    if has_jf:
+        libs = jellyfin_api.libraries(jf_url, jf_key)
+        if libs is None:
+            errors.append(f"Could not read Jellyfin at {jf_url} — check the Jellyfin URL and API key in Settings.")
+        else:
+            result += [{"key": f"jellyfin:{lib['id']}", "title": lib["name"], "type": lib["type"], "server": "Jellyfin"}
+                       for lib in libs if lib["type"]]
 
     # ── All other Tunarr-connected sources (key prefixed "tunarr:") ────────────
     if tunarr_url:
-        for source in (channel_engine.api(tunarr_url, "GET", "/api/media-sources") or []):
-            # Skip the primary Plex — its sections are already listed above.
-            if source.get("type") == "plex" and source.get("uri", "").rstrip("/").lower() == plex_url:
-                continue
-            source_name = source.get("name", source.get("type", "Unknown"))
-            for lib in source.get("libraries", []):
-                if not lib.get("enabled"):
-                    continue
-                media_type = lib.get("mediaType", "")
-                lib_type = ("movie" if media_type in ("movie", "movies")
-                            else "show" if media_type == "shows" else None)
-                if not lib_type:
-                    continue
-                result.append({"key": f"tunarr:{lib['id']}", "title": lib.get("name", lib["id"]),
-                                "type": lib_type, "server": source_name})
+        sources = channel_engine.api(tunarr_url, "GET", "/api/media-sources") or []
+        jellyfin_sources = [s for s in sources if s.get("type") == "jellyfin"]
+
+        def already_listed(source):
+            uri = source.get("uri", "").rstrip("/").lower()
+            if source.get("type") == "plex":
+                return has_plex and uri == plex_url.lower()
+            # Tunarr may know the same Jellyfin by a different address than Programmarr does,
+            # so a lone Jellyfin source counts as the one listed above too.
+            if source.get("type") == "jellyfin":
+                return has_jf and (uri == jf_url.lower() or len(jellyfin_sources) == 1)
+            return False
+        result += _other_tunarr_libraries(tunarr_url, already_listed)
 
     # Nothing to show AND a known reason: say the reason instead of rendering an
     # empty picker the user can't act on.
-    if not result and plex_error:
-        raise HTTPException(502, plex_error)
-
+    if not result and errors:
+        raise HTTPException(502, " ".join(errors))
     return result
 
 
@@ -260,35 +271,6 @@ def _other_tunarr_libraries(tunarr_url, skip):
             if lib_type:
                 result.append({"key": f"tunarr:{lib['id']}", "title": lib.get("name", lib["id"]),
                                "type": lib_type, "server": source_name})
-    return result
-
-
-def _list_jellyfin_libraries(cfg, tunarr_url):
-    """The Jellyfin (beta) counterpart of the Plex listing above: the Jellyfin server's own movie
-    and TV libraries ("jellyfin:{id}"), then the other Tunarr sources ("tunarr:{id}")."""
-    jf_url = cfg.get("jellyfin_url", "").rstrip("/")
-    jf_key = cfg.get("jellyfin_api_key", "")
-    if not jf_url or not jf_key:
-        raise HTTPException(400, "Jellyfin not configured")
-    libs = jellyfin_api.libraries(jf_url, jf_key)
-    result = [{"key": f"jellyfin:{lib['id']}", "title": lib["name"], "type": lib["type"], "server": "Jellyfin"}
-              for lib in (libs or []) if lib["type"]]
-    jf_error = "" if libs is not None else (
-        f"Could not read Jellyfin at {jf_url} — check the Jellyfin URL and API key in Settings.")
-
-    if tunarr_url:
-        sources = channel_engine.api(tunarr_url, "GET", "/api/media-sources") or []
-        jellyfin_sources = [s for s in sources if s.get("type") == "jellyfin"]
-
-        def is_primary(source):
-            # Tunarr's copy of the same Jellyfin is already listed above. Tunarr may know it by a
-            # different address than Programmarr does, so a lone Jellyfin source counts as it too.
-            return source.get("type") == "jellyfin" and (
-                source.get("uri", "").rstrip("/").lower() == jf_url.lower() or len(jellyfin_sources) == 1)
-        result += _other_tunarr_libraries(tunarr_url, is_primary)
-
-    if not result and jf_error:
-        raise HTTPException(502, jf_error)
     return result
 
 

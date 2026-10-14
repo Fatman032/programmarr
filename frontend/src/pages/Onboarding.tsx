@@ -1,6 +1,6 @@
 import {
   ActionIcon, Alert, Box, Button, Card, Center, Divider, Group,
-  PasswordInput, SegmentedControl, Stack, Stepper, Text, TextInput, Title,
+  Checkbox, PasswordInput, Stack, Stepper, Text, TextInput, Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -87,8 +87,9 @@ export default function Onboarding({ onComplete }: Props) {
   const [passwordConfirm, setPasswordConfirm] = useState('');
 
   // Step 1 — Connections
-  // Which media server feeds Tunarr: Plex (URL + token) or Jellyfin (beta, URL + API key).
-  const [mediaServer, setMediaServer] = useState<'plex' | 'jellyfin'>('plex');
+  // Which media servers feed Tunarr — Plex (URL + token), Jellyfin (beta, URL + API key), or both.
+  const [usePlex, setUsePlex] = useState(true);
+  const [useJellyfin, setUseJellyfin] = useState(false);
   const [jellyfinUrl, setJellyfinUrl] = useState('http://');
   const [jellyfinKey, setJellyfinKey] = useState('');
   const [tunarrUrl, setTunarrUrl] = useState('http://');
@@ -105,11 +106,13 @@ export default function Onboarding({ onComplete }: Props) {
     { tunarr?: ConnStatus; plex?: ConnStatus; jellyfin?: ConnStatus } | null
   >(null);
   const testPassed = !!testResult?.tunarr?.ok
-    && (mediaServer === 'jellyfin' ? !!testResult?.jellyfin?.ok : !!testResult?.plex?.ok);
-  // What has to be filled in before testing / continuing: Tunarr plus the chosen server's address + key.
-  const connectReady = !!tunarrUrl.trim() && (mediaServer === 'jellyfin'
-    ? !!jellyfinUrl.trim() && !!jellyfinKey.trim()
-    : !!plexUrl.trim() && !!plexToken.trim());
+    && (!usePlex || !!testResult?.plex?.ok)
+    && (!useJellyfin || !!testResult?.jellyfin?.ok);
+  // What has to be filled in before testing / continuing: Tunarr, and the address + key of every
+  // server ticked — at least one.
+  const connectReady = !!tunarrUrl.trim() && (usePlex || useJellyfin)
+    && (!usePlex || (!!plexUrl.trim() && !!plexToken.trim()))
+    && (!useJellyfin || (!!jellyfinUrl.trim() && !!jellyfinKey.trim()));
 
   async function testConnections() {
     setTesting(true);
@@ -119,9 +122,8 @@ export default function Onboarding({ onComplete }: Props) {
         tunarr_url: tunarrUrl.trim(),
         tunarr_username: tunarrUser.trim(),
         tunarr_password: tunarrPass,
-        ...(mediaServer === 'plex'
-          ? { plex_url: plexUrl.trim(), plex_token: plexToken.trim() }
-          : { jellyfin_url: jellyfinUrl.trim(), jellyfin_api_key: jellyfinKey.trim() }),
+        ...(usePlex ? { plex_url: plexUrl.trim(), plex_token: plexToken.trim() } : {}),
+        ...(useJellyfin ? { jellyfin_url: jellyfinUrl.trim(), jellyfin_api_key: jellyfinKey.trim() } : {}),
       }));
     } catch (e: any) {
       setTestResult({ tunarr: { ok: false, url: '', error: e.message } });
@@ -142,13 +144,13 @@ export default function Onboarding({ onComplete }: Props) {
         tunarr_url: tunarrUrl.trim(),
         channel_order: channelOrder,
       };
-      if (mediaServer === 'jellyfin') {
-        config.media_server = 'jellyfin';
-        config.jellyfin_url = jellyfinUrl.trim();
-        config.jellyfin_api_key = jellyfinKey.trim();
-      } else {
+      if (usePlex) {
         config.plex_url = plexUrl.trim();
         config.plex_token = plexToken.trim();
+      }
+      if (useJellyfin) {
+        config.jellyfin_url = jellyfinUrl.trim();
+        config.jellyfin_api_key = jellyfinKey.trim();
       }
       if (tmdbKey.trim()) config.tmdb_api_key = tmdbKey.trim();
       if (tunarrUser.trim()) config.tunarr_username = tunarrUser.trim();
@@ -249,20 +251,9 @@ export default function Onboarding({ onComplete }: Props) {
               <Box>
                 <Text fw={700} mb={4}>Connect your services</Text>
                 <Text size="sm" c="dimmed">
-                  {mediaServer === 'jellyfin'
-                    ? 'Tunarr and Jellyfin must be running and reachable on your network.'
-                    : 'Tunarr and Plex must be running and reachable on your network.'}
+                  Tunarr must be running and reachable on your network, along with your media
+                  server — Plex, Jellyfin (beta), or both.
                 </Text>
-              </Box>
-
-              <Box>
-                <Text size="sm" fw={500} mb={4}>Your media server</Text>
-                <SegmentedControl
-                  fullWidth
-                  value={mediaServer}
-                  onChange={(v) => { setMediaServer(v as 'plex' | 'jellyfin'); setTestResult(null); }}
-                  data={[{ label: 'Plex', value: 'plex' }, { label: 'Jellyfin (beta)', value: 'jellyfin' }]}
-                />
               </Box>
 
               <TextInput
@@ -272,7 +263,12 @@ export default function Onboarding({ onComplete }: Props) {
                 onChange={(e) => setTunarrUrl(e.currentTarget.value)}
                 required
               />
-              {mediaServer === 'plex' && (
+              <Checkbox
+                label="I use Plex"
+                checked={usePlex}
+                onChange={(e) => { setUsePlex(e.currentTarget.checked); setTestResult(null); }}
+              />
+              {usePlex && (
               <>
               <TextInput
                 label="Plex URL"
@@ -304,7 +300,12 @@ export default function Onboarding({ onComplete }: Props) {
               />
               </>
               )}
-              {mediaServer === 'jellyfin' && (
+              <Checkbox
+                label="I use Jellyfin (beta)"
+                checked={useJellyfin}
+                onChange={(e) => { setUseJellyfin(e.currentTarget.checked); setTestResult(null); }}
+              />
+              {useJellyfin && (
               <>
               <TextInput
                 label="Jellyfin URL"
@@ -358,7 +359,7 @@ export default function Onboarding({ onComplete }: Props) {
 
               {testResult && (
                 <Stack gap="xs">
-                  {(mediaServer === 'jellyfin' ? (['tunarr', 'jellyfin'] as const) : (['tunarr', 'plex'] as const)).map((k) => {
+                  {(['tunarr', ...(usePlex ? ['plex'] : []), ...(useJellyfin ? ['jellyfin'] : [])] as ('tunarr' | 'plex' | 'jellyfin')[]).map((k) => {
                     const r = testResult[k];
                     if (!r) return null;
                     return (
