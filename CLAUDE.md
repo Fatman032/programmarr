@@ -46,7 +46,7 @@ backend/          FastAPI app + routers
   routers/        config / status / channels / pipeline / recipes / logs routers
 frontend/         React + Mantine SPA (built to backend/static/)
   src/pages/      Onboarding, Dashboard, Run (the Planner stepper), Channels, Settings, Logs
-data/             Bind-mounted volume — config.json, channels.json, plex_library.csv, logs/
+data/             Bind-mounted volume — config.json, channels.json, library.csv, logs/
 ```
 
 **Environment variables (Docker):**
@@ -62,7 +62,7 @@ data/             Bind-mounted volume — config.json, channels.json, plex_libra
 - **Channels page** lists channels from the live Tunarr API (`GET /api/tunarr/channels`); clicking a row fetches the full `channels.json` entry and opens the editor. Channels in Tunarr with no `channels.json` entry show as **"Not managed by Programmarr"** (read-only orphans).
 - **Save and Apply** (`POST /api/channels/{number}/apply`) saves a channel edit to `channels.json` and pushes it to Tunarr in place — preserving the Tunarr id and Plex DVR mapping. This is the Channels-page equivalent of the scheduler's per-channel update, but available for any channel (not just live ones).
 - `asyncio.WindowsProactorEventLoopPolicy` is set at startup in `main.py` — **required** on Windows for `asyncio.create_subprocess_exec`; no-op on Linux/Docker. (This is the one place it's stated; don't duplicate it.)
-- **Deferred (Tier 3):** drag-to-reorder channels, autocomplete from plex_library.csv, inline Plex validation.
+- **Deferred (Tier 3):** drag-to-reorder channels, autocomplete from library.csv, inline Plex validation.
 
 ## Local Development
 
@@ -105,7 +105,7 @@ inside the image (`npm run build` during `docker build`); **never commit files u
 pip install -r backend/requirements-dev.txt   # one-time (pytest; dev-only, not in the image)
 pytest                                         # reads pytest.ini -> backend/tests
 ```
-Each test seeds a temp `DATA_DIR` with a synthetic `plex_library.csv` (the `seed` fixture in
+Each test seeds a temp `DATA_DIR` with a synthetic `library.csv` (the `seed` fixture in
 `conftest.py`) — nothing touches a real Plex/Tunarr. Covers `library_facets`, `compose_channels`,
 `validate(append=True)`, `discover_prompt`, and `generate_no_ai`.
 
@@ -114,7 +114,7 @@ runs `ghcr.io/alpinearchitecture/programmarr:latest` with Watchtower (`:latest` 
 a GitHub Release is cut — not on a master push; Watchtower picks it up shortly after).
 
 **Demo dataset:** `python scripts/make_demo_data.py` (re)generates the committed `demo/` dir
-(synthetic `plex_library.csv` + `channels.json` + safe `config.json`) used for deterministic doc
+(synthetic `library.csv` + `channels.json` + safe `config.json`) used for deterministic doc
 screenshots. See the script's header for usage and which pages render offline.
 
 ## Workflow
@@ -160,7 +160,7 @@ Each script's role and the gotcha worth knowing. Flags and exact behavior live i
 and the code — don't restate them here.
 
 - **`programmarr.py`** — CLI entry point. Flat menu (AI / No-AI / Collections / images / sync / quit). Walks first-run config setup, **always probes before deploying**, and pre-deploy asks whether to wipe-and-rebuild or preserve channels below a number (so manual/lower channels and their custom images survive). Accepts JSONL or bare-array LLM output and normalizes to the internal `{"channels":[...]}` dict.
-- **`export.py`** — pulls full metadata from the Plex API. Includes **studio** + top-3 billed **actors** plus **Country / Mood / Style** tags (all from the `/all` response, via `_join_tags`) which power the Planner's entity/country/mood/style channels. Auto-detects all movie+TV sections (or scope with `--movie-sections`/`--tv-sections`); cross-references Tunarr to flag unsynced content. Output: `plex_library.csv` + `export_summary.json`.
+- **`export.py`** — pulls full metadata from the Plex API. Includes **studio** + top-3 billed **actors** plus **Country / Mood / Style** tags (all from the `/all` response, via `_join_tags`) which power the Planner's entity/country/mood/style channels. Auto-detects all movie+TV sections (or scope with `--movie-sections`/`--tv-sections`); cross-references Tunarr to flag unsynced content. Output: `library.csv` + `export_summary.json`.
 - **`generate_no_ai.py`** — builds a starter `channels.json` from CSV metadata (decade + genre movie channels, 50+ episode TV marathons; placeholders for franchise/specialty). Numbers channels sequentially using `channel_blocks.assign_numbers` + `channel_blocks.resolve_order`; `--order KEY,KEY,…` overrides category order; `--start N` sets the first number.
 - **`channel_blocks.py`** — shared, **pure, importable** channel-numbering logic (no `config.json`/argv). `assign_numbers(order, counts, start)` packs categories tight sequentially; `resolve_order(configured)` validates/fills the configured order against `CANONICAL_ORDER`. Single source of truth for compose, the LLM prompt, and `generate_no_ai`. **Must stay in the Dockerfile `COPY` line.**
 - **`generate_from_collections.py`** — one channel per Plex collection via `{"collection":"Name"}`. Manages the collection block (default ch 80+): keeps everything below `--base`, regenerates from `--base` up. Re-run any time Kometa changes collections.

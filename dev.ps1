@@ -12,7 +12,7 @@
 #   Backend (reload): http://localhost:7979   (Vite proxies /api here)
 #
 # Data + scripts are pointed at the repo so the backend reads ./data/config.json,
-# channels.json, plex_library.csv exactly like the Docker container does.
+# channels.json, library.csv exactly like the Docker container does.
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot

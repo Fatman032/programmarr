@@ -2,7 +2,7 @@
 """
 generate_no_ai.py — Generate a starter channels.json without any AI.
 
-Reads plex_library.csv and auto-generates:
+Reads library.csv (plex_library.csv on older installs) and auto-generates:
   - TV Marathon channels from shows with 50+ episodes
   - Decade movie channels from year metadata
   - Genre movie channels from genre metadata
@@ -16,7 +16,7 @@ Output is a valid channels.json ready for create.py, but franchise/specialty
 channels will have empty content lists that you fill in manually.
 
 Usage:
-    python generate_no_ai.py                    # reads plex_library.csv
+    python generate_no_ai.py                    # reads library.csv
     python generate_no_ai.py --csv myfile.csv   # custom input
     python generate_no_ai.py --out myfile.json  # custom output
     python generate_no_ai.py --genres "Comedy,Horror,Western"  # only these genres
@@ -39,12 +39,14 @@ Toggle flags (omit any flag to keep its default = "all"):
 import argparse
 import csv
 import json
+import os
 import sys
 from collections import defaultdict
 
 import channel_blocks
 
-DEFAULT_CSV = "plex_library.csv"
+# library.csv; an install that hasn't exported since the rename still has plex_library.csv.
+DEFAULT_CSV = "library.csv" if os.path.exists("library.csv") or not os.path.exists("plex_library.csv") else "plex_library.csv"
 DEFAULT_OUT = "channels.json"
 DEFAULT_START = channel_blocks.DEFAULT_START
 
@@ -185,7 +187,7 @@ def main():
                 "name": name,
                 "shuffle": shuffle,
                 "content": content,
-                "_note": "EDIT: add show titles manually from plex_library.csv",
+                "_note": "EDIT: add show titles manually from library.csv",
             })
             print(f"  {name} (placeholder)")
 
@@ -243,7 +245,7 @@ def main():
                 "name": name,
                 "shuffle": shuffle,
                 "content": content,
-                "_note": "EDIT: add titles manually from plex_library.csv",
+                "_note": "EDIT: add titles manually from library.csv",
             })
             print(f"  {name} (placeholder)")
 

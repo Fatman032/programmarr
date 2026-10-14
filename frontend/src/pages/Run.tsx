@@ -1872,8 +1872,8 @@ function DiscoverStep({ discover, curatePools, onDone }: { discover: boolean; cu
           <Step n={3}>
             <Text size="sm" fw={600} mb={4}>Paste the prompt, then attach your library file</Text>
             {csvInfo?.exists ? (
-              <Button component="a" href="/api/pipeline/csv" download="plex_library.csv" leftSection={<IconDownload size={14} />} color="grape" variant="light" size="xs">
-                Download plex_library.csv ({csvInfo.rows?.toLocaleString()} titles)
+              <Button component="a" href="/api/pipeline/csv" download="library.csv" leftSection={<IconDownload size={14} />} color="grape" variant="light" size="xs">
+                Download library.csv ({csvInfo.rows?.toLocaleString()} titles)
               </Button>
             ) : (
               <Alert color="yellow" variant="light" icon={<IconAlertCircle size={14} />}>Run Export first to generate the library file.</Alert>

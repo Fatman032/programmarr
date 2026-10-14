@@ -19,7 +19,7 @@ data/*
 # Synthetic demo dataset (committed on purpose — no real library or secrets).
 # Re-include the demo files the global patterns above would otherwise ignore.
 !demo/
-!demo/plex_library.csv
+!demo/library.csv
 !demo/channels.json
 !demo/config.json
 

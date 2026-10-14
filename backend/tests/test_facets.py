@@ -314,7 +314,7 @@ def test_programming_blocks_case_insensitive_match(pr, seed, tmp_path, monkeypat
 
 
 def test_programming_blocks_no_csv_returns_empty(pr, tmp_path, monkeypatch):
-    """Returns empty list if no plex_library.csv exists."""
+    """Returns empty list if no library.csv exists."""
     import json
     catalog = [{"name": "TGIF", "era": "1989–2000", "network": "ABC",
                 "shows": ["Full House", "Family Matters", "Step by Step"]}]
@@ -347,7 +347,7 @@ def test_countries_facet_empty_when_column_absent(pr, seed):
     # — so the column exists but is empty.  Simulate old CSV by omitting the column.
     import csv
     from conftest import CSV_FIELDS
-    path = pr._test_data_dir / "plex_library.csv"
+    path = pr._test_data_dir / "library.csv"
     old_fields = [f for f in CSV_FIELDS if f not in ("Country", "Mood", "Style")]
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=old_fields)

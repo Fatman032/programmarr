@@ -296,7 +296,7 @@ def test_tvmaze_scan_status_endpoint(pr, seed, monkeypatch):
 
 
 def test_tvmaze_scan_no_csv_returns_early(pr, monkeypatch):
-    """_start_tvmaze_scan_impl returns no_csv reason if plex_library.csv is absent."""
+    """_start_tvmaze_scan_impl returns no_csv reason if library.csv is absent."""
     import routers.pipeline_router as module
     result = module._start_tvmaze_scan_impl()
     assert result["running"] is False

@@ -411,7 +411,7 @@ async def channel_reviews(refresh: bool = False):
 
 @router.get("/library/titles")
 def library_titles():
-    csv = DATA_DIR / "plex_library.csv"
+    csv = channel_engine.library_csv(DATA_DIR)
     if not csv.exists():
         return []
     titles = []

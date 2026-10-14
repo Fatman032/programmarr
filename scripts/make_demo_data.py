@@ -2,7 +2,7 @@
 """Generate a synthetic demo dataset for screenshots and onboarding.
 
 Writes a self-contained data dir (default: ./demo) holding the three files the web
-app reads — plex_library.csv, channels.json, config.json (plus export_summary.json)
+app reads — library.csv, channels.json, config.json (plus export_summary.json)
 — so the app can be launched in "demo mode" without touching your real library:
 
     PROGRAMMARR_DATA=./demo PROGRAMMARR_SCRIPTS=. python -m uvicorn main:app --app-dir backend
@@ -310,7 +310,7 @@ def main():
 
     movie_rows = build_movie_rows()
     show_rows = build_show_rows()
-    write_csv(out / "plex_library.csv", movie_rows + show_rows)
+    write_csv(out / "library.csv", movie_rows + show_rows)
 
     with open(out / "export_summary.json", "w", encoding="utf-8") as f:
         json.dump({"movies": len(movie_rows), "tv_shows": len(show_rows),

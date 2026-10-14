@@ -95,7 +95,7 @@ def _run_export(tmp_path, monkeypatch, config, *args):
     (tmp_path / "config.json").write_text(json.dumps(config))
     monkeypatch.setattr(sys, "argv", ["export.py", *args])
     export.main()
-    with open(tmp_path / "plex_library.csv", encoding="utf-8") as f:
+    with open(tmp_path / "library.csv", encoding="utf-8") as f:
         return {r["Title"]: r for r in csv.DictReader(f)}
 
 

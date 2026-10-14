@@ -745,7 +745,7 @@ def test_country_missing_column_returns_empty(pr, seed):
     """When the CSV has no Country column (old export), country spec finds nothing and is skipped."""
     import csv as _csv
     from conftest import CSV_FIELDS
-    path = pr._test_data_dir / "plex_library.csv"
+    path = pr._test_data_dir / "library.csv"
     old_fields = [f for f in CSV_FIELDS if f not in ("Country", "Mood", "Style")]
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = _csv.DictWriter(fh, fieldnames=old_fields)

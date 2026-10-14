@@ -352,7 +352,9 @@ def workflow_ai():
     print()
     generated_path = generate_prompt()
 
-    csv_path      = os.path.join(SCRIPT_DIR, "plex_library.csv")
+    csv_path      = os.path.join(SCRIPT_DIR, "library.csv")
+    if not os.path.exists(csv_path) and os.path.exists(os.path.join(SCRIPT_DIR, "plex_library.csv")):
+        csv_path = os.path.join(SCRIPT_DIR, "plex_library.csv")  # exported before the rename
     channels_path = os.path.join(SCRIPT_DIR, "channels.json")
 
     print(f"""

@@ -12,6 +12,7 @@ No dependencies beyond the Python standard library.
 """
 
 import base64
+import pathlib
 import json
 import os
 import time
@@ -141,6 +142,19 @@ def get_plex_sources(tunarr_url):
 # The Tunarr media sources whose libraries Programmarr can read. Tunarr describes a movie or
 # show the same way whichever server it came from (outside ids + the server's own id), so
 # channel building works on any of them. Jellyfin support is BETA.
+# The exported library file. It was called plex_library.csv before Jellyfin, so an install that
+# hasn't run Export since still has the old name — read that until the next Export writes the new
+# one. (The old file is left alone, so going back to an older version still finds it.)
+LIBRARY_CSV = "library.csv"
+OLD_LIBRARY_CSV = "plex_library.csv"
+
+
+def library_csv(data_dir):
+    """The exported library file in `data_dir`: library.csv, or an older install's plex_library.csv."""
+    new, old = pathlib.Path(data_dir) / LIBRARY_CSV, pathlib.Path(data_dir) / OLD_LIBRARY_CSV
+    return old if old.exists() and not new.exists() else new
+
+
 LIBRARY_SOURCE_TYPES = ("plex", "jellyfin")
 
 

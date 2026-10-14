@@ -69,7 +69,7 @@ export.py  →  generate_no_ai.py   →  create.py  →  fetch_images.py  →  s
 
 | Script | What it does |
 |--------|--------------|
-| `export.py` | Pulls full metadata from Plex → `plex_library.csv` + `export_summary.json`. Auto-detects movie + TV sections. |
+| `export.py` | Pulls full metadata from Plex → `library.csv` + `export_summary.json`. Auto-detects movie + TV sections. |
 | `generate_no_ai.py` | Builds a starter `channels.json` from the CSV (no AI). `--order KEY,KEY,…` overrides category order; `--start N` sets the first channel number. |
 | `generate_from_collections.py` | One channel per Plex collection. `--apply` to write; manages the collection block from `--base` up. |
 | `create.py` | Reads `channels.json` and deploys to Tunarr (delete-then-create). `--from N` scopes; `--protect N1,N2` preserves specific channels. |

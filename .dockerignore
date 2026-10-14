@@ -10,6 +10,7 @@ data/
 config.json
 channels.json
 plex_library.csv
+library.csv
 prompt_for_llm.md
 gemresults.json
 *.log

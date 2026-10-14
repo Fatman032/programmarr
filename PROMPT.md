@@ -13,12 +13,12 @@ blocks; too high and it pads with thin channels. A good rule of thumb: ~1 channe
 15–20 titles in your library.
 
 **Option A — File attachment (recommended if your LLM supports it):**
-Paste the prompt, then attach `plex_library.csv` as a file. The LLM reads the
+Paste the prompt, then attach `library.csv` as a file. The LLM reads the
 CSV as structured data rather than raw text, which produces more accurate results
 and uses the context window more efficiently.
 
 **Option B — Single paste (works everywhere):**
-Paste the prompt, then paste the full contents of `plex_library.csv` directly
+Paste the prompt, then paste the full contents of `library.csv` directly
 after it. Works with any LLM or interface that doesn't support file uploads.
 
 > **Note on the Channel Numbering Scheme below:** the category order shown is the default. When
@@ -83,5 +83,5 @@ After the channel list, you may add a brief plain-text note listing any notable 
 
 ## The Library
 
-(Option A: attach plex_library.csv as a file and delete this section)
-(Option B: paste the full contents of plex_library.csv here)
+(Option A: attach library.csv as a file and delete this section)
+(Option B: paste the full contents of library.csv here)

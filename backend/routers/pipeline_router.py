@@ -207,7 +207,7 @@ def list_libraries():
 
     # ── Plex sections (via Plex API, key prefixed "plex:") ─────────────────────
     if has_plex:
-        srv_name = (cfg.get("plex_servers") or [{}])[0].get("name", "Your Library")
+        srv_name = (cfg.get("plex_servers") or [{}])[0].get("name", "Plex")
         try:
             data = _plex_get(plex_url, plex_token, "/library/sections")
             for s in data["MediaContainer"].get("Directory", []):
@@ -292,16 +292,16 @@ async def run_export(opts: ExportOptions = ExportOptions()):
 
 @router.get("/pipeline/csv")
 def download_csv():
-    p = DATA_DIR / "plex_library.csv"
+    p = channel_engine.library_csv(DATA_DIR)
     if not p.exists():
         raise HTTPException(404, "Run Export first")
-    return FileResponse(str(p), filename="plex_library.csv", media_type="text/csv")
+    return FileResponse(str(p), filename=channel_engine.LIBRARY_CSV, media_type="text/csv")
 
 
 @router.get("/pipeline/csv/info")
 def csv_info():
     import csv as _csv
-    p = DATA_DIR / "plex_library.csv"
+    p = channel_engine.library_csv(DATA_DIR)
     if not p.exists():
         return {"exists": False}
     stat = p.stat()
@@ -406,7 +406,7 @@ def _decade_start(year):
 def library_facets(min_items: int = 5):
     """Library facets that drive the Planner v2 candidate list.
 
-    One pass over plex_library.csv yields: genre counts (canonical always returned,
+    One pass over the library file yields: genre counts (canonical always returned,
     'more' above min_items), decades present, genre×decade matrix and genre∩genre
     blend counts (movies, above COMBO_MIN/BLEND_MIN), stand-alone entity lists
     (studio/director/actor above their thresholds, capped), TV genre counts for
@@ -414,7 +414,7 @@ def library_facets(min_items: int = 5):
     """
     import csv as _csv
     from itertools import combinations
-    p = DATA_DIR / "plex_library.csv"
+    p = channel_engine.library_csv(DATA_DIR)
     if not p.exists():
         return {"exists": False}
 
@@ -601,7 +601,7 @@ def get_programming_blocks():
         catalog = json.load(f)
 
     # Build a lower-cased set of TV show titles from the library.
-    csv_path = DATA_DIR / "plex_library.csv"
+    csv_path = channel_engine.library_csv(DATA_DIR)
     if not csv_path.exists():
         return []
     show_titles: dict[str, str] = {}  # lower → canonical title
@@ -648,8 +648,8 @@ def _library_title_set(movies: list[dict], shows: list[dict]) -> dict[str, dict]
 
 
 def _library_signature() -> str:
-    """Return a cheap fingerprint of plex_library.csv (mtime + size) for cache keying."""
-    p = DATA_DIR / "plex_library.csv"
+    """Return a cheap fingerprint of the library file (mtime + size) for cache keying."""
+    p = channel_engine.library_csv(DATA_DIR)
     try:
         st = p.stat()
         return f"{st.st_mtime:.0f}-{st.st_size}"
@@ -857,7 +857,7 @@ def _start_tvmaze_scan_impl(refresh: bool = False) -> dict:
     """
     import csv as _csv
 
-    csv_path = DATA_DIR / "plex_library.csv"
+    csv_path = channel_engine.library_csv(DATA_DIR)
     if not csv_path.exists():
         return {"running": False, "cached": False, "reason": "no_csv"}
 
@@ -1399,7 +1399,7 @@ def _start_tmdb_scan_impl(refresh: bool = False) -> dict:
     """
     import csv as _csv
 
-    csv_path = DATA_DIR / "plex_library.csv"
+    csv_path = channel_engine.library_csv(DATA_DIR)
     if not csv_path.exists():
         return {"running": False, "cached": False, "reason": "no_csv"}
 
@@ -1464,7 +1464,7 @@ def start_tmdb_scan(refresh: bool = Query(False)):
     Pass ?refresh=1 to force a rescan even if the cache is valid.
 
     The scan fetches TMDB movie details (belongs_to_collection + keywords) for every
-    movie in plex_library.csv using bounded concurrency (12 workers).  Progress is
+    movie in the library file using bounded concurrency (12 workers).  Progress is
     readable via GET /pipeline/tmdb-scan/status.  The result is cached to
     data/tmdb_enrichment.json keyed by the library signature.
     """
@@ -1501,7 +1501,7 @@ def get_franchises(refresh: bool = False):
 
     Pass ?refresh=1 to trigger a fresh rescan of both sources.
     """
-    csv_path = DATA_DIR / "plex_library.csv"
+    csv_path = channel_engine.library_csv(DATA_DIR)
     if not csv_path.exists():
         return []
 
@@ -1818,9 +1818,9 @@ def discover_prompt(opts: DiscoverOptions = DiscoverOptions()):
 
     parts = [
         "You are a TV channel programmer. The user has a self-hosted media library "
-        "(attached as plex_library.csv) and has ALREADY built these channels:\n\n"
+        "(attached as library.csv) and has ALREADY built these channels:\n\n"
         f"{listing}",
-        "Use ONLY exact titles from the attached plex_library.csv. Do not invent titles "
+        "Use ONLY exact titles from the attached library.csv. Do not invent titles "
         "or duplicate the channels above. Each channel you output needs at least 4 fitting titles.",
     ]
 
@@ -1902,7 +1902,7 @@ _DECADE_LABEL = {start: label for label, start, _ in DECADE_BUCKETS}
 
 def _load_library():
     import csv as _csv
-    p = DATA_DIR / "plex_library.csv"
+    p = channel_engine.library_csv(DATA_DIR)
     if not p.exists():
         return [], []
     movies, shows = [], []
@@ -2047,14 +2047,14 @@ def _auto_name(spec: CandidateSpec) -> str:
 def compose_channels(req: ComposeRequest):
     """Deterministically build channels.json from picked Planner candidate specs.
 
-    Each spec is resolved against plex_library.csv into a title list; empties are
+    Each spec is resolved against the library file into a title list; empties are
     skipped and reported.  Numbers are assigned sequentially tight-packed in the
     configured category order (channel_order config key), starting from req.start.
     Empty categories consume no numbers; input order within a category is preserved.
     """
     movies, shows = _load_library()
     if not movies and not shows:
-        raise HTTPException(404, "Run Export first — plex_library.csv not found")
+        raise HTTPException(404, "Run Export first — library.csv not found")
 
     # Resolve + bucket by category, preserving input order within each.
     buckets: dict[str, list[dict]] = {c: [] for c in _CATEGORY_ORDER}

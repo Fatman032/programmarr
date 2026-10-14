@@ -4,10 +4,10 @@ export.py — Export your Plex or Jellyfin (beta) library to CSV for channel gen
 
 Fetches full metadata from your media server (genres, ratings, directors, episode counts),
 cross-references against Tunarr to keep only synced content, and writes
-plex_library.csv ready to paste into any LLM. (The file keeps its old name for either server.)
+library.csv ready to paste into any LLM. (Before Jellyfin it was called plex_library.csv.)
 
 Usage:
-    python export.py                    # writes plex_library.csv
+    python export.py                    # writes library.csv
     python export.py --out myfile.csv   # custom output path
     python export.py --no-crossref      # skip Tunarr sync check
 """
@@ -23,7 +23,7 @@ import channel_engine
 import jellyfin_api
 
 CONFIG_FILE = "config.json"
-OUTPUT_FILE = "plex_library.csv"
+OUTPUT_FILE = "library.csv"
 
 
 # ── Config ─────────────────────────────────────────────────────────────────────

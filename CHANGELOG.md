@@ -36,6 +36,11 @@ All notable changes to Programmarr are documented here. This project follows
   Jellyfin yet (collections, live rules) are shown but say "not on Jellyfin yet" instead of failing, and
   the deploy skips the Plex sync and ends with the one-time Jellyfin Live TV steps (M3U tuner + XMLTV
   guide addresses from Tunarr, with copy buttons).
+- **The export file is now `library.csv`** (it was `plex_library.csv`), since it can come from Plex,
+  Jellyfin, or both. An install that hasn't run Export since still reads its old `plex_library.csv`
+  until the next Export, and the old file is left in place so an older version still finds it.
+- **The library picker says "Plex"** next to your Plex libraries instead of "Your Library".
+
 ### Notes
 
 - Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.

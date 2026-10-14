@@ -1,7 +1,7 @@
 """Shared pytest fixtures for the backend smoke suite.
 
 Points the pipeline router at a temp data dir seeded with a synthetic
-plex_library.csv, so the deterministic units (facets / compose / validate /
+library.csv, so the deterministic units (facets / compose / validate /
 discover-prompt) can be exercised in isolation without a real Plex export.
 """
 
@@ -52,9 +52,9 @@ def pr(tmp_path, monkeypatch):
 
 @pytest.fixture
 def seed(pr):
-    """Write a synthetic plex_library.csv into the router's temp DATA_DIR."""
+    """Write a synthetic library.csv into the router's temp DATA_DIR."""
     def _seed(rows):
-        path = pr._test_data_dir / "plex_library.csv"
+        path = pr._test_data_dir / "library.csv"
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
             w.writeheader()
