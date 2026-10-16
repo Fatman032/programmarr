@@ -2282,7 +2282,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
                   </Button>
                 </Group>
               )}
-              <Text size="sm" mb="sm">Leave the other settings as they are and click <b>Save</b>.</Text>
+              <Text size="sm" mb="sm">Click <b>Save</b>.</Text>
               <Text size="sm" mb={4}>3. Under <b>TV Guide Data Providers</b>, click <b>+</b> and choose <b>XMLTV</b>. Under <b>File or URL</b>, paste:</Text>
               {xmltvUrl && (
                 <Group gap="xs" wrap="nowrap" mb="sm">
@@ -2293,7 +2293,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
                   </Button>
                 </Group>
               )}
-              <Text size="sm" mb="sm">Leave the other settings as they are and click <b>Save</b>.</Text>
+              <Text size="sm" mb="sm">Click <b>Save</b>.</Text>
               <Text size="sm" mb="xs">4. Click <b>Refresh Guide Data</b>. Your channels will appear under Live TV.</Text>
               {jellyfinWebUrl && <Button component="a" href={jellyfinWebUrl} target="_blank" rel="noreferrer" variant="light" color="grape" size="xs" leftSection={<IconExternalLink size={13} />}>Open Jellyfin</Button>}
             </Alert>
