@@ -284,18 +284,22 @@ _values_lock = threading.Lock()
 
 @router.get("/library/rule-values")
 async def library_rule_values(rule: str, kind: str = "movie", refresh: bool = False):
-    """The choices for a live rule's pick-list — {"values": [{value, label, count}]}: the
-    genres / studios / directors / actors in Plex (as Plex spells them, with how many items have
-    each) or the decades. 400 for an unknown rule; 502 when Plex can't be read, so the screen
-    can fall back to typing."""
+    """The choices for a live rule's pick-list — {"values": [{value, label, count}], "server"}:
+    the genres / studios / directors / actors on the server the rule asks — Plex when set up,
+    else Jellyfin (beta) — as that server spells them, with how many items have each, or the
+    decades. 400 for an unknown rule; 502 when the server can't be read (or none is set up), so
+    the screen can fall back to typing."""
     if rule not in channel_engine.RULE_KINDS:
         raise HTTPException(400, f"rule must be one of: {', '.join(channel_engine.RULE_KINDS)}")
     if kind not in ("movie", "show"):
         raise HTTPException(400, "kind must be 'movie' or 'show'")
     cfg = _load_config()
+    channel_engine.set_tunarr_auth_from_config(cfg)   # also remembers the Jellyfin connection
     plex_url, plex_token = cfg.get("plex_url", "").rstrip("/"), cfg.get("plex_token", "")
-    if not plex_url or not plex_token:
-        raise HTTPException(502, "Plex is not configured")
+    server = channel_engine.rule_server({}, plex_url, plex_token)
+    if server is None:
+        raise HTTPException(502, "No Plex or Jellyfin server is set up")
+    name = "Plex" if server == "plex" else "Jellyfin"
 
     def _do():
         with _values_lock:
@@ -307,8 +311,8 @@ async def library_rule_values(rule: str, kind: str = "movie", refresh: bool = Fa
     if values is None:
         with _values_lock:
             _values_cache["at"] = 0.0   # don't keep a failed read around
-        raise HTTPException(502, "Plex could not be read")
-    return {"values": values}
+        raise HTTPException(502, f"{name} could not be read")
+    return {"values": values, "server": name}
 
 
 @router.get("/library/lookup")

@@ -43,21 +43,21 @@ function optionLabel(a: AmbiguousChoice, o: AmbiguousChoice['options'][number]):
 }
 
 // What the Add box's first dropdown offers. Left blank it adds a plain title, as before.
-// Collections come from Plex or Jellyfin (beta). Live rules ask Plex directly; on a Jellyfin-only
-// setup they're not built yet, so they're shown but can't be picked, instead of pretending to work.
-function addTypes(isJellyfin: boolean) {
+// Collections come from Plex or Jellyfin (beta). Live rules ask the server again on every refresh:
+// Plex when it's set up, else Jellyfin (beta).
+function addTypes(ruleServer: string) {
   return [
     { group: 'Fixed', items: [
       { value: 'movie', label: 'Movie' },
       { value: 'show', label: 'TV Show' },
       { value: 'collection', label: 'Collection' },
     ] },
-    { group: isJellyfin ? 'Live rule (not on Jellyfin yet)' : 'Live rule (asks Plex on every refresh)', items: [
-      { value: 'genre', label: 'Genre', disabled: isJellyfin },
-      { value: 'studio', label: 'Studio', disabled: isJellyfin },
-      { value: 'director', label: 'Director', disabled: isJellyfin },
-      { value: 'actor', label: 'Actor', disabled: isJellyfin },
-      { value: 'decade', label: 'Decade', disabled: isJellyfin },
+    { group: `Live rule (asks ${ruleServer} on every refresh)`, items: [
+      { value: 'genre', label: 'Genre' },
+      { value: 'studio', label: 'Studio' },
+      { value: 'director', label: 'Director' },
+      { value: 'actor', label: 'Actor' },
+      { value: 'decade', label: 'Decade' },
     ] },
   ];
 }
@@ -240,11 +240,11 @@ function ChannelModal({
   const [looking, setLooking] = useState(false);
   // The Add box: a kind (blank = plain title), movies or TV shows for a rule, and the value.
   const [addType, setAddType] = useState<string | null>(null);
-  // Live rules ask Plex; a Jellyfin-only setup (beta) doesn't have them yet.
+  // Live rules ask Plex when it's set up, else Jellyfin (beta) — the same choice the engine makes.
   const { hasPlex } = useMediaServers();
-  const isJellyfin = !hasPlex;
+  const ruleServer = hasPlex ? 'Plex' : 'Jellyfin';
   const [addKind, setAddKind] = useState<'movie' | 'show'>('movie');
-  // What Plex has for the chosen rule (a pick-list). null = not loaded or Plex unreachable -> type it instead.
+  // What the server has for the chosen rule (a pick-list). null = not loaded or unreachable -> type it instead.
   const [ruleChoices, setRuleChoices] = useState<RuleValue[] | null>(null);
   const [choicesFailed, setChoicesFailed] = useState(false);
   const isRuleType = !!addType && RULE_TYPES.includes(addType);
@@ -372,7 +372,7 @@ function ChannelModal({
   async function addItem() {
     const text = entryText();
     if (!text || looking) return;
-    // A rule ({genre: Animation}, {studio: Pixar}, {decade: 1980}…) stays live too: Plex is asked again on every refresh.
+    // A rule ({genre: Animation}, {studio: Pixar}, {decade: 1980}…) stays live too: the server is asked again on every refresh.
     const rule = ruleFromText(text);
     if (rule) return pushRow(rowFromEntry(rule));
     const typed = text.match(/^\{(collection|movie|show):\s*(.+)\}$/);
@@ -603,7 +603,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
           <Select
             placeholder="Title"
             aria-label="What to add"
-            data={addTypes(isJellyfin)}
+            data={addTypes(ruleServer)}
             value={addType}
             onChange={(v) => {
               setAddType(v);
@@ -624,7 +624,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
               searchable
               clearable
               limit={100}
-              nothingFoundMessage="Nothing like that in Plex"
+              nothingFoundMessage={`Nothing like that in ${ruleServer}`}
               style={{ flex: 1 }}
               size="sm"
             />
@@ -633,7 +633,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
               placeholder={
                 addType === 'collection' ? 'Collection name'
                   : addType === 'movie' || addType === 'show' ? 'Title'
-                  : isRuleType ? (choicesFailed ? 'Plex could not be read — type it exactly' : 'Loading from Plex…')
+                  : isRuleType ? (choicesFailed ? `${ruleServer} could not be read — type it exactly` : `Loading from ${ruleServer}…`)
                   : 'Title (or {genre: Animation} and the like)'
               }
               value={newItem}

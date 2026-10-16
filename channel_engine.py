@@ -938,9 +938,10 @@ def _resolve_collection_member(member, movie_map, show_map, id_index):
 
 
 # ── Live rules: genre / studio / director / actor / decade ──────────────────────────
-# A channel entry like {"rule": "genre", "value": "Animation"} is asked of Plex again on
-# every refresh, so the channel keeps finding new matches. Before this, picking a genre in
-# the Planner froze the matches into a plain list of titles and forgot the rule.
+# A channel entry like {"rule": "genre", "value": "Animation"} is asked of the media server
+# (Plex, or Jellyfin — beta) again on every refresh, so the channel keeps finding new matches.
+# Before this, picking a genre in the Planner froze the matches into a plain list of titles
+# and forgot the rule.
 
 RULE_KINDS = ("genre", "studio", "director", "actor", "decade")
 RULE_LEAD_CAST = 3   # same cut as the Planner's export: only the top-billed actors count
@@ -969,7 +970,8 @@ def _plex_listing(plex_url, token, kind, sections, cache):
     for section in sections:
         if section.get("type") != plex_type:
             continue
-        data = plex_get(plex_url, token, f"/library/sections/{section.get('key')}/all?type={number}", timeout=120)
+        data = plex_get(plex_url, token, f"/library/sections/{section.get('key')}/all?type={number}&includeGuids=1",
+                        timeout=120)
         if not data:
             ok = False
             continue
@@ -986,6 +988,7 @@ def _plex_listing(plex_url, token, kind, sections, cache):
             listing.append({
                 "title": it["title"], "kind": kind, "year": it.get("year"),
                 "plex_id": str(it["ratingKey"]) if it.get("ratingKey") is not None else None,
+                "ids": _plex_guid_ids(it),
                 "raw": raw,   # as Plex spells them: what a pick-list shows
                 "genres": [v.lower() for v in raw["genre"]],
                 "directors": [v.lower() for v in raw["director"]],
@@ -994,6 +997,72 @@ def _plex_listing(plex_url, token, kind, sections, cache):
             })
     cache[ck] = listing if ok else None
     return cache[ck]
+
+
+def _jellyfin_listing(kind, cache):
+    """Every movie or show Jellyfin has (BETA), in the same shape as _plex_listing and with the
+    same cut (top-billed actors only), fetched once per cycle (cached). None when Jellyfin isn't
+    set up or could not be read — "don't know", never "nothing matches"."""
+    ck = ("jellyfin-listing", kind)
+    if ck in cache:
+        return cache[ck]
+    if _JELLYFIN is None:
+        return None
+    url, api_key = _JELLYFIN
+    libs = jellyfin_api.libraries(url, api_key)
+    listing, ok = [], libs is not None
+    for lib in libs or []:
+        if lib["type"] != kind:
+            continue
+        found = jellyfin_api.items(url, api_key, lib["id"], "Movie" if kind == "movie" else "Series")
+        if found is None:
+            ok = False
+            continue
+        for it in found:
+            if not it.get("Name"):
+                continue
+            people = [p for p in it.get("People") or [] if isinstance(p, dict) and (p.get("Name") or "").strip()]
+            raw = {
+                "genre": [g.strip() for g in it.get("Genres") or [] if isinstance(g, str) and g.strip()],
+                "director": [p["Name"].strip() for p in people if p.get("Type") == "Director"],
+                "studio": [s["Name"].strip() for s in it.get("Studios") or []
+                           if isinstance(s, dict) and (s.get("Name") or "").strip()],
+                "actor": [p["Name"].strip() for p in people if p.get("Type") == "Actor"][:RULE_LEAD_CAST],
+            }
+            providers = {k.lower(): str(v) for k, v in (it.get("ProviderIds") or {}).items() if v}
+            ids = {"tmdb": providers.get("tmdb"), "imdb": providers.get("imdb"), "jellyfin": it.get("Id")}
+            listing.append({
+                "title": it["Name"], "kind": kind, "year": it.get("ProductionYear"), "plex_id": None,
+                "ids": {k: v for k, v in ids.items() if v},
+                "raw": raw,   # as Jellyfin spells them: what a pick-list shows
+                "genres": [v.lower() for v in raw["genre"]],
+                "directors": [v.lower() for v in raw["director"]],
+                "studios": [v.lower() for v in raw["studio"]],
+                "actors": [v.lower() for v in raw["actor"]],
+            })
+    cache[ck] = listing if ok else None
+    return cache[ck]
+
+
+def rule_server(entry, plex_url, token):
+    """Which server a rule asks: the one it names ("server": "plex" / "jellyfin"), else Plex when
+    Plex is set up, else Jellyfin. None when that server isn't set up."""
+    server = (entry or {}).get("server")
+    has_plex = bool(plex_url and token)
+    if server == "jellyfin" or (server != "plex" and not has_plex):
+        return "jellyfin" if _JELLYFIN is not None else None
+    return "plex" if has_plex else None
+
+
+_SERVER_NAMES = {"plex": "Plex", "jellyfin": "Jellyfin"}
+
+
+def _rule_listing(server, kind, plex_url, token, sections, cache):
+    if server == "plex":
+        return _plex_listing(plex_url, token, kind, sections, cache)
+    if server == "jellyfin":
+        return _jellyfin_listing(kind, cache)
+    return None
 
 
 def _rule_matches(rule, value, item):
@@ -1014,29 +1083,33 @@ def _rule_matches(rule, value, item):
 
 
 def resolve_rule_members(entry, plex_url, token, sections, cache):
-    """The Plex items matching one {"rule": .., "value": ..} entry, as the same dicts a
-    collection gives ({"title", "kind", "plex_id", "year"}), so they are matched to Tunarr
-    by Plex id too. None when Plex could not be read."""
+    """The media server's items matching one {"rule": .., "value": ..} entry (Plex, or Jellyfin —
+    see rule_server), as the same dicts a collection gives ({"title", "kind", "plex_id", "year",
+    "ids"}), so they are matched to Tunarr the same way: TMDB, IMDB, the server's own id, then
+    title + year. None when the server could not be read."""
     kind = "show" if entry.get("kind") == "show" else "movie"
-    listing = _plex_listing(plex_url, token, kind, sections, cache)
+    server = rule_server(entry, plex_url, token)
+    listing = _rule_listing(server, kind, plex_url, token, sections, cache)
     if listing is None:
         return None
     label = _rule_label(entry)
-    return [{"title": it["title"], "kind": kind, "plex_id": it["plex_id"], "year": it["year"], "_rule": label}
+    return [{"title": it["title"], "kind": kind, "plex_id": it["plex_id"], "year": it["year"],
+             "ids": it.get("ids") or {}, "_rule": label, "_server": _SERVER_NAMES[server]}
             for it in listing if _rule_matches(entry["rule"], entry["value"], it)]
 
 
-def rule_values(rule, kind, plex_url, token, sections, cache):
+def rule_values(rule, kind, plex_url, token, sections, cache, server=None):
     """What a rule can be set to, for a pick-list: [{"value", "label", "count"}] — the genres /
-    studios / directors / actors (as Plex spells them, with how many items have each) or the
-    decades in Plex. The same cut as the rule itself, so every choice finds at least one item.
-    None when Plex could not be read."""
+    studios / directors / actors (as the server spells them, with how many items have each) or
+    the decades. Asks the server a rule would (rule_server), or `server` if given. The same cut
+    as the rule itself, so every choice finds at least one item. None when it could not be read."""
     if rule not in RULE_KINDS:
         return []
-    listing = _plex_listing(plex_url, token, "show" if kind == "show" else "movie", sections, cache)
+    server = rule_server({"server": server}, plex_url, token)
+    listing = _rule_listing(server, "show" if kind == "show" else "movie", plex_url, token, sections, cache)
     if listing is None:
         return None
-    counts = {}   # lowercased -> [as Plex spells it, count]
+    counts = {}   # lowercased -> [as the server spells it, count]
     for it in listing:
         if rule == "decade":
             year = it.get("year")
@@ -1082,11 +1155,12 @@ def resolve_content(content_list, movie_map, show_map,
       IMDB, the server's own id, then title + year — never by a bare title alone, so a
       collection's "Wonder Woman" the movie can't turn into the show.
     - A {"rule": "genre"|"studio"|"director"|"actor"|"decade", "value": "..."} entry
-      (optionally "kind": "show") — Plex is asked for the current matches on every call, and
-      each one is matched to Tunarr by Plex id. A match Tunarr hasn't scanned in yet is
-      reported (and joins on its own once Tunarr has it). If Plex can't be read the rule is
-      NOT evaluated and report["blocked"] says so — callers must then leave the channel alone,
-      or it would lose everything the rule brought.
+      (optionally "kind": "show", "server": "plex"|"jellyfin") — the media server is asked for
+      the current matches on every call (Plex when set up, else Jellyfin — beta), and each one
+      is matched to Tunarr by TMDB, IMDB, the server's id, then title + year. A match Tunarr
+      hasn't scanned in yet is reported (and joins on its own once Tunarr has it). If the
+      server can't be read the rule is NOT evaluated and report["blocked"] says so — callers
+      must then leave the channel alone, or it would lose everything the rule brought.
     - A {"match": "title_contains", "value": "..."} ref — word-boundary scan of the
       Tunarr library; order/exclude supported.
     - A {"match": "franchise", "name": "..."} ref — identity-based resolution via the
@@ -1179,20 +1253,22 @@ def resolve_content(content_list, movie_map, show_map,
                 print(f"    WARNING: unsupported rule: {entry}")
                 _miss(label, "unsupported rule")
             else:
-                rule_members = (resolve_rule_members(entry, plex_url, plex_token, plex_sections, collection_cache)
-                                if plex_url and plex_token else None)
+                server = _SERVER_NAMES.get(rule_server(entry, plex_url, plex_token), "No media server")
+                rule_members = resolve_rule_members(entry, plex_url, plex_token, plex_sections, collection_cache)
                 if rule_members is None:
-                    why = "Plex could not be read, so this rule was not checked"
+                    why = (f"{server} could not be read, so this rule was not checked"
+                           if server != "No media server" else
+                           "no media server is set up for it (Plex or Jellyfin), so this rule was not checked")
                     print(f"    WARNING: {label}: {why}")
                     _miss(label, why)
                     if report is not None:
                         report.setdefault("blocked", []).append(f"{label}: {why}")
                 elif not rule_members:
-                    print(f"    WARNING: rule {label} matched nothing in Plex")
-                    _miss(label, "matched nothing in Plex")
+                    print(f"    WARNING: rule {label} matched nothing in {server}")
+                    _miss(label, f"matched nothing in {server}")
                 else:
-                    expanded_titles.extend(rule_members)  # dicts: matched by Plex id below
-                    print(f"    Rule {label}: {len(rule_members)} titles in Plex")
+                    expanded_titles.extend(rule_members)  # dicts: matched by their ids below
+                    print(f"    Rule {label}: {len(rule_members)} titles in {server}")
         elif isinstance(entry, dict) and "match" in entry:
             if entry["match"] == "franchise" and entry.get("name"):
                 fr_name = entry["name"]
@@ -1225,16 +1301,19 @@ def resolve_content(content_list, movie_map, show_map,
 
     resolved = []
     seen = set()      # lets a rule's item that is also listed by hand count once
-    waiting = {}      # rule label -> titles Plex has that Tunarr hasn't scanned in yet
+    waiting = {}      # rule label -> titles the server has that Tunarr hasn't scanned in yet
+    waiting_on = {}   # rule label -> that server's name
     for entry in expanded_titles:
         if isinstance(entry, _Resolved):
             resolved.append(dict(entry))
             seen |= _item_keys(entry)
             continue
         rule_label = None
-        if isinstance(entry, dict):  # a Plex collection (or rule) member
+        if isinstance(entry, dict):  # a collection (or rule) member, from Plex or Jellyfin
             title = entry["title"]
             rule_label = entry.get("_rule")
+            if rule_label:
+                waiting_on[rule_label] = entry.get("_server", "Plex")
             item = _resolve_collection_member(entry, movie_map, show_map, id_index)
         else:
             title, kind = entry if isinstance(entry, tuple) else (entry, None)
@@ -1251,8 +1330,8 @@ def resolve_content(content_list, movie_map, show_map,
 
     for label, titles in waiting.items():
         first = ", ".join(titles[:3]) + ("…" if len(titles) > 3 else "")
-        _miss(label, f"{len(titles)} in Plex but not in Tunarr yet — it adds them after its next "
-                     f"scan, and they join then ({first})")
+        _miss(label, f"{len(titles)} in {waiting_on.get(label, 'Plex')} but not in Tunarr yet — it adds them "
+                     f"after its next scan, and they join then ({first})")
 
     resolved.extend(matched_items)
     return resolved, missing

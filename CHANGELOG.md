@@ -53,6 +53,14 @@ All notable changes to Programmarr are documented here. This project follows
 - **Collection members are matched the same way on both servers:** TMDB, then IMDB, then the server's
   own id, then title + year. Plex members now carry their TMDB/IMDB numbers too (Plex `includeGuids`),
   so a Plex collection also finds a movie Tunarr holds from another server.
+- **Live rules on Jellyfin (BETA)** — `{genre: ..}`, studio, director, actor and decade, movies or TV,
+  the same as on Plex: the rule is asked of Jellyfin again on every refresh, so a new movie with that
+  genre joins the channel on its own. The Add box's rule types and their pick-lists (with counts) work
+  on Jellyfin. A rule asks Plex when Plex is set up, else Jellyfin (`"server": "jellyfin"` pins it).
+  Matches are found in Tunarr by TMDB, IMDB, the server's own id, then title + year — Plex rule
+  matches now carry their TMDB/IMDB numbers too. Something Jellyfin has but Tunarr hasn't scanned yet
+  is reported, and if Jellyfin can't be read the rule isn't checked and the channel is left alone.
+  Jellyfin tags genres its own way, so the same rule can find a different number of titles than on Plex.
 - **A Jellyfin collection no longer hides its movies from Export/Scan.** Jellyfin lists a collection in
   place of its members unless asked not to, so once a "Fish" collection existed the export lost its
   10 movies and reported "Fish" as a movie not in Tunarr. It now asks for every movie and show
@@ -72,7 +80,7 @@ All notable changes to Programmarr are documented here. This project follows
 ### Notes
 
 - Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.
-- Still Plex-only for now: live rules, and the command-line `generate_from_collections.py`.
+- Still Plex-only: the command-line `generate_from_collections.py`, and the Planner's Mood/Style channels (Jellyfin has no such tags).
 - Checked on a Jellyfin library of 1,629 movies and 113 shows through Tunarr 2026.10.1.
 
 ## [1.1.2] — 2026-10-15 (my build)

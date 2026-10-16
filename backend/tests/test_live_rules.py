@@ -64,6 +64,7 @@ def plex(monkeypatch):
     state.down = False
 
     def fake_plex_get(base_url, token, path, timeout=60):
+        path = path.replace("&includeGuids=1", "")  # asks Plex for TMDB / IMDB numbers too
         state.calls.append(path)
         if state.down:
             return None
