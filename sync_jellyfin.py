@@ -7,9 +7,15 @@ M3U tuner and an XMLTV guide, both from Tunarr). After that, every deploy runs t
 Jellyfin refresh its guide, so new and changed channels show up right away instead of at
 Jellyfin's next scheduled refresh.
 
+Jellyfin keeps its downloaded copy of the XMLTV guide for an hour and reuses it on a refresh, so a
+channel added within that hour shows up without guide listings — and Jellyfin's guide hides a
+channel with no listings. So the guide provider is saved again unchanged first, which is what
+Save does in Jellyfin's dashboard: Jellyfin then drops its copy and downloads Tunarr's guide fresh.
+
 Exit codes: 0 = Jellyfin's guide is up to date; 2 = Jellyfin has no Tunarr tuner or guide yet,
 or channels are still missing after the refresh (the deploy screen then shows the one-time
-steps); 1 = Jellyfin or Tunarr couldn't be read.
+steps); 3 = every channel is in Jellyfin but some have no guide listings yet; 1 = Jellyfin or
+Tunarr couldn't be read.
 
 Usage:
     python sync_jellyfin.py            # refresh Jellyfin's guide
@@ -81,22 +87,46 @@ def find_tunarr_guide(livetv):
     return None
 
 
-def jellyfin_channel_numbers(url, key):
+def jellyfin_channels(url, key):
+    """{channel number: Jellyfin channel id} for Jellyfin's Live TV channels, or None."""
     data = jellyfin_api.get(url, key, "/LiveTv/Channels?EnableImages=false&EnableUserData=false")
     if not isinstance(data, dict):
         return None
-    return {str(c.get("Number")) for c in data.get("Items", []) if c.get("Number") is not None}
+    return {str(c.get("Number")): c.get("Id") for c in data.get("Items", []) if c.get("Number") is not None}
 
 
-def refresh_guide(url, key):
-    """Start Jellyfin's Refresh Guide task and wait for it to finish. True if it completed."""
+def jellyfin_channel_numbers(url, key):
+    channels = jellyfin_channels(url, key)
+    return None if channels is None else set(channels)
+
+
+def channels_without_listings(url, key, channels):
+    """The channel numbers (of {number: Jellyfin id}) that have no guide listings in Jellyfin.
+    Jellyfin's guide doesn't show a channel without listings."""
+    empty = []
+    for number, channel_id in channels.items():
+        data = jellyfin_api.get(url, key, f"/LiveTv/Programs?ChannelIds={channel_id}&Limit=1&EnableImages=false")
+        if isinstance(data, dict) and not data.get("TotalRecordCount"):
+            empty.append(number)
+    return sorted(empty, key=int)
+
+
+def refresh_guide(url, key, guide=None):
+    """Have Jellyfin download Tunarr's guide fresh and refresh, then wait for it to finish. True
+    if it completed. With `guide` (Jellyfin's XMLTV provider entry, as read), the entry is saved
+    again unchanged: Jellyfin then deletes its cached copy and queues the refresh itself. If that
+    isn't accepted, the refresh is started directly (and may reuse a copy up to an hour old)."""
     tasks = jellyfin_api.get(url, key, "/ScheduledTasks") or []
     task = next((t for t in tasks if t.get("Key") == REFRESH_TASK_KEY), None)
     if not task:
         print("  ! Jellyfin has no Refresh Guide task")
         return False
     before = (task.get("LastExecutionResult") or {}).get("EndTimeUtc")
-    if task.get("State") != "Running" and not jellyfin_api.post(url, key, f"/ScheduledTasks/Running/{task['Id']}"):
+    resaved = guide is not None and jellyfin_api.post(
+        url, key, "/LiveTv/ListingProviders?validateListings=false&validateLogin=false", body=guide)
+    if resaved:
+        print("  Asked Jellyfin to download Tunarr's guide fresh")
+    elif task.get("State") != "Running" and not jellyfin_api.post(url, key, f"/ScheduledTasks/Running/{task['Id']}"):
         return False
 
     deadline = time.time() + REFRESH_TIMEOUT_S
@@ -113,6 +143,9 @@ def refresh_guide(url, key):
         elif result.get("EndTimeUtc") and result.get("EndTimeUtc") != before:
             if result.get("Status") == "Completed":
                 return True
+            if result.get("Status") == "Cancelled" and resaved:
+                before = result.get("EndTimeUtc")  # a run already going was stopped for the queued one
+                continue
             print(f"  ! Jellyfin's guide refresh ended with: {result.get('Status')} {result.get('ErrorMessage') or ''}".rstrip())
             return False
     print(f"  ! Jellyfin's guide refresh didn't finish within {REFRESH_TIMEOUT_S // 60} minutes")
@@ -179,10 +212,11 @@ def main():
         return
 
     print("\nRefreshing Jellyfin's Live TV guide...")
-    if not refresh_guide(url, key):
+    if not refresh_guide(url, key, guide):
         sys.exit(1)
 
-    have = jellyfin_channel_numbers(url, key) or set()
+    now = jellyfin_channels(url, key) or {}
+    have = set(now)
     still_missing = tunarr_nums - have
     if still_missing:
         print(f"  Jellyfin still doesn't have {_channels(len(still_missing))}: "
@@ -193,6 +227,12 @@ def main():
     added = len(missing)
     print(f"  Guide refreshed — all {len(tunarr_nums)} channels are in Jellyfin"
           + (f" ({added} added)." if added else "."))
+    no_listings = channels_without_listings(url, key, {n: now[n] for n in tunarr_nums})
+    if no_listings:
+        print(f"  ! No guide listings yet for {_channels(len(no_listings))}: "
+              + ", ".join(f"#{n}" for n in no_listings)
+              + ". Jellyfin's guide hides a channel until it has listings; they arrive on its next guide refresh.")
+        sys.exit(3)
 
 
 if __name__ == "__main__":

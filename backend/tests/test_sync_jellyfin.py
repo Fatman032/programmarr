@@ -55,8 +55,11 @@ def test_nothing_set_up_finds_nothing():
 class FakeJellyfin:
     """Jellyfin's API as sync_jellyfin uses it: Live TV settings, channels, scheduled tasks."""
 
-    def __init__(self, livetv, channels, after_refresh=None, refresh_status="Completed"):
+    def __init__(self, livetv, channels, after_refresh=None, refresh_status="Completed",
+                 accept_resave=True, without_listings=()):
         self.livetv, self.channels = livetv, list(channels)
+        self.accept_resave, self.without_listings = accept_resave, set(without_listings)
+        self.resaved = []
         self.after_refresh = after_refresh if after_refresh is not None else list(channels)
         self.refresh_status = refresh_status
         self.task = {"Id": "rg", "Key": "RefreshGuide", "State": "Idle",
@@ -67,15 +70,24 @@ class FakeJellyfin:
         if path == "/System/Configuration/livetv":
             return self.livetv
         if path.startswith("/LiveTv/Channels"):
-            return {"Items": [{"Number": n} for n in self.channels]}
+            return {"Items": [{"Number": n, "Id": f"jf-{n}"} for n in self.channels]}
+        if path.startswith("/LiveTv/Programs?ChannelIds=jf-"):
+            number = path.split("jf-")[1].split("&")[0]
+            return {"TotalRecordCount": 0 if number in self.without_listings else 9, "Items": []}
         if path == "/ScheduledTasks":
             return [{"Key": "Other"}, self.task]
         if path == "/ScheduledTasks/rg":
             return self.task
         raise AssertionError(path)
 
-    def post(self, url, key, path, timeout=30):
-        assert path == "/ScheduledTasks/Running/rg"
+    def post(self, url, key, path, body=None, timeout=30):
+        if path.startswith("/LiveTv/ListingProviders?"):
+            # Jellyfin: save the provider, drop its cached guide copy, queue Refresh Guide
+            if not self.accept_resave:
+                return False
+            self.resaved.append(body)
+        else:
+            assert path == "/ScheduledTasks/Running/rg"
         self.started += 1
         self.task = {**self.task, "LastExecutionResult": {"EndTimeUtc": "new", "Status": self.refresh_status}}
         self.channels = self.after_refresh
@@ -152,3 +164,27 @@ def test_probe_changes_nothing(run, capsys):
     fake = FakeJellyfin(SET_UP, ["1", "2", "3", "4"])
     assert run(fake, "--probe") == 0
     assert fake.started == 0 and "#5" in capsys.readouterr().out
+
+
+# ── Jellyfin reuses its guide copy for an hour: the provider is re-saved to drop it ─────
+
+def test_the_guide_provider_is_saved_again_unchanged_so_the_guide_is_downloaded_fresh(run, capsys):
+    """Jellyfin reuses its downloaded XMLTV for an hour, so channels added within that hour had no
+    listings and Jellyfin's guide hid them (the real test: 8 channels, the guide showed 5)."""
+    fake = FakeJellyfin(SET_UP, ["1", "2", "3", "4", "5"])
+    assert run(fake) == 0
+    assert fake.resaved == [GUIDE]
+    assert "download Tunarr's guide fresh" in capsys.readouterr().out
+
+
+def test_if_the_resave_isnt_accepted_the_refresh_is_started_directly(run):
+    fake = FakeJellyfin(SET_UP, ["1", "2", "3", "4", "5"], accept_resave=False)
+    assert run(fake) == 0 and fake.resaved == [] and fake.started == 1
+
+
+def test_channels_without_listings_are_reported_not_the_setup_steps(run, capsys):
+    fake = FakeJellyfin(SET_UP, ["1", "2", "3", "4", "5"], without_listings=("5", "3"))
+    assert run(fake) == 3
+    out = capsys.readouterr().out
+    assert "No guide listings yet for 2 channels: #3, #5" in out
+    assert "One-time setup" not in out

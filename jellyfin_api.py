@@ -39,9 +39,15 @@ def get(base_url, api_key, path, timeout=120):
         return None
 
 
-def post(base_url, api_key, path, timeout=30):
-    """POST to a Jellyfin API path with no body. True if Jellyfin accepted it (failures are printed)."""
-    req = urllib.request.Request(base_url.rstrip("/") + path, data=b"", method="POST", headers=headers(api_key))
+def post(base_url, api_key, path, body=None, timeout=30):
+    """POST to a Jellyfin API path, with `body` sent as JSON (or no body). True if Jellyfin accepted
+    it (failures are printed)."""
+    hdrs = headers(api_key)
+    data = b""
+    if body is not None:
+        data = json.dumps(body).encode()
+        hdrs = {**hdrs, "Content-Type": "application/json"}
+    req = urllib.request.Request(base_url.rstrip("/") + path, data=data, method="POST", headers=hdrs)
     try:
         with urllib.request.urlopen(req, timeout=timeout):
             return True

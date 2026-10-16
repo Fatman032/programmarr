@@ -2045,6 +2045,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
   const [showSync, setShowSync] = useState(false);
   const [jfLines, setJfLines] = useState<string[]>([]);
   const [jfStatus, setJfStatus] = useState<CascadeStatus>('pending');
+  // Jellyfin has every channel but some have no guide listings yet (exit 3): a note, not the setup box.
+  const [jfListingsLate, setJfListingsLate] = useState(false);
   const [showJfSync, setShowJfSync] = useState(false);
 
   // Preview gate: fetch the diff summary before the deploy button is shown.
@@ -2202,6 +2204,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
       setPhase('jfsync'); setJfStatus('running'); setJfLines([]);
       const jcode = await streamPipeline('/pipeline/sync-jellyfin', {}, (ev) => { if (ev.type === 'line') setJfLines(l => [...l, ev.text]); });
       setJfStatus(jcode === 0 ? 'ok' : 'warn');
+      setJfListingsLate(jcode === 3);
     }
 
     setPhase('done');
@@ -2244,7 +2247,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
   // ── Done summary ──
   if (phase === 'done') {
     const syncFailed = deployOk && syncStatus === 'warn';
-    const jfSyncFailed = deployOk && jfStatus === 'warn';
+    const jfSyncFailed = deployOk && jfStatus === 'warn' && !jfListingsLate;
     return (
       <Stack gap="lg">
         <ResultsCard
@@ -2268,15 +2271,17 @@ function DeployStep({ setup }: { setup: SetupState }) {
               </StatusRow>
             )}
             {deployOk && syncStatus === 'ok' && <StatusRow status="ok" label="Plex sync complete — your channels are in the guide" />}
-            {deployOk && jfStatus === 'ok' && (
-              <StatusRow status="ok" label="Jellyfin Live TV refreshed — your channels are in the guide">
+            {deployOk && (jfStatus === 'ok' || jfListingsLate) && (
+              <StatusRow status={jfListingsLate ? 'warn' : 'ok'} label={jfListingsLate
+                ? 'Your channels are in Jellyfin Live TV, but some have no guide listings yet — Jellyfin shows them once its next guide refresh brings the listings'
+                : 'Jellyfin Live TV refreshed — your channels are in the guide'}>
                 <Button size="compact-xs" variant="subtle" color="gray" onClick={() => setShowJfSync(v => !v)}>details</Button>
               </StatusRow>
             )}
           </Stack>
 
           {deployOk && <Collapse in={showArt}><Box mb="md"><TerminalOutput lines={artLines} done success={artStatus === 'ok'} height={180} /></Box></Collapse>}
-          {jfStatus === 'ok' && <Collapse in={showJfSync}><Box mb="md"><TerminalOutput lines={jfLines} done success height={180} /></Box></Collapse>}
+          {(jfStatus === 'ok' || jfListingsLate) && <Collapse in={showJfSync}><Box mb="md"><TerminalOutput lines={jfLines} done success height={180} /></Box></Collapse>}
 
           {/* Jellyfin (beta): can't-miss one-time steps when the Live TV refresh didn't work, like Plex's below. */}
           {jfSyncFailed && (

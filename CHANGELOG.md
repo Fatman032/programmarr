@@ -41,7 +41,10 @@ All notable changes to Programmarr are documented here. This project follows
   channel made it. Only when Tunarr isn't set up in Jellyfin yet, or channels are still missing, does
   the deploy end with the one-time steps (the M3U and XMLTV addresses with copy buttons, using
   Jellyfin's own labels) and the sync log. New script `sync_jellyfin.py` (`--probe` shows the state
-  without changing anything).
+  without changing anything). Jellyfin reuses its downloaded guide for an hour, so a channel added
+  within that hour got no listings and Jellyfin's guide hid it; the sync now saves the XMLTV guide
+  entry again unchanged (what Save does in Jellyfin's dashboard), which makes Jellyfin download
+  Tunarr's guide fresh, and then checks every channel has listings.
 - **Jellyfin collections (BETA)**, the same as Plex collections. The Collections step ("Just my
   collections" and "Also add channels from my collections") lists your Jellyfin collections with their
   posters, next to Plex's when you use both. The Add box's **Collection** type works on Jellyfin. A
