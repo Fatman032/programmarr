@@ -4,6 +4,15 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **One click to deploy, not two.** The Deploy step showed what would change, then **Confirm deploy**
+  only swapped the preview for a second button (**Apply Changes** / **Deploy N Channels**) that did
+  the actual deploy. The preview's button now deploys straight away. After a failed deploy,
+  **Back to review** shows a fresh preview.
+
 ## [1.1.2] — 2026-10-15 (my build)
 
 ### Fixed
