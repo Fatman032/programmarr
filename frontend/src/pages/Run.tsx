@@ -181,15 +181,8 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
   onNuke: () => void;
 }) {
   const [hasTmdb, setHasTmdb] = useState(false);
-  // Collections come from Plex; a Jellyfin-only setup (beta) doesn't have them yet.
-  const { hasPlex } = useMediaServers();
-  const isJellyfin = !hasPlex;
-  useEffect(() => {
-    if (isJellyfin && (setup.method === 'collections' || setup.includeCollections)) {
-      onChange({ method: 'build', includeCollections: false });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isJellyfin]);
+  // Collections come from whichever servers you use: Plex, Jellyfin (beta), or both.
+  const { name: serverName } = useMediaServers();
   const [tunarrChannels, setTunarrChannels] = useState<{ number: number; name: string }[]>([]);
   const [checkedNums, setCheckedNums] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -288,9 +281,9 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
           />
           <MethodCard
             icon={<IconStack2 size={18} />} title="Just my collections"
-            desc={isJellyfin ? 'One channel per collection — not on Jellyfin yet (beta).' : 'One channel per Plex collection. Skips the library scan.'}
-            active={!isJellyfin && setup.method === 'collections'}
-            onClick={() => { if (!isJellyfin) onChange({ method: 'collections' }); }}
+            desc={`One channel per ${serverName} collection. Skips the library scan.`}
+            active={setup.method === 'collections'}
+            onClick={() => onChange({ method: 'collections' })}
           />
         </SimpleGrid>
       </Card>
@@ -301,10 +294,9 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
         <Stack gap="sm">
           {setup.method !== 'collections' && (
             <Checkbox
-              label={`Also add channels from my ${isJellyfin ? 'Jellyfin' : 'Plex'} collections`}
-              description={isJellyfin ? 'Not on Jellyfin yet (beta).' : "You'll choose which ones before deploying."}
-              disabled={isJellyfin}
-              checked={!isJellyfin && setup.includeCollections}
+              label={`Also add channels from my ${serverName} collections`}
+              description="You'll choose which ones before deploying."
+              checked={setup.includeCollections}
               onChange={(e) => onChange({ includeCollections: e.currentTarget.checked })}
             />
           )}
@@ -1925,10 +1917,10 @@ function DiscoverStep({ discover, curatePools, onDone }: { discover: boolean; cu
 
 // ── Collections step ───────────────────────────────────────────────────────────
 
-type CollectionSel = { id: string; name: string; channel_number: number; include: boolean };
+type CollectionSel = { id: string; name: string; channel_number: number; include: boolean; server?: 'plex' | 'jellyfin' };
 
 function CollectionsStep({ start, onDone }: { start: number; onDone: () => void }) {
-  const serverName = 'Plex';  // collections come from Plex
+  const { name: serverName } = useMediaServers();  // Plex, Jellyfin (beta), or both
   const [collections, setCollections] = useState<PlexCollection[]>([]);
   const [selections, setSelections] = useState<CollectionSel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1951,7 +1943,7 @@ function CollectionsStep({ start, onDone }: { start: number; onDone: () => void 
         const maxNum = (chFile.channels ?? []).reduce((m: number, c: { number: number }) => Math.max(m, c.number ?? 0), 0);
         const base = Math.max(start, Math.ceil((maxNum + 1) / 10) * 10);
         setCollections(cols);
-        setSelections(cols.map((c, i) => ({ id: c.id, name: c.name, channel_number: base + i, include: true })));
+        setSelections(cols.map((c, i) => ({ id: c.id, name: c.name, channel_number: base + i, include: true, server: c.server })));
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
@@ -1965,7 +1957,7 @@ function CollectionsStep({ start, onDone }: { start: number; onDone: () => void 
   async function apply() {
     setApplying(true);
     try {
-      const payload: CollectionSelection[] = selections.map(s => ({ name: s.name, channel_number: s.channel_number, include: s.include }));
+      const payload: CollectionSelection[] = selections.map(s => ({ name: s.name, channel_number: s.channel_number, include: s.include, server: s.server }));
       const r = await api.applyCollections(payload);
       notifications.show({ message: `${r.added} collection${r.added !== 1 ? 's' : ''} added`, color: 'green', icon: <IconCheck size={14} /> });
       onDone();
@@ -2003,7 +1995,7 @@ function CollectionsStep({ start, onDone }: { start: number; onDone: () => void 
             <Group key={col.id} gap="sm" wrap="nowrap" px="md" py={6}
               style={{ borderBottom: idx < collections.length - 1 ? '1px solid var(--border-subtle)' : undefined, opacity: sel.include ? 1 : 0.4 }}>
               <Checkbox checked={sel.include} onChange={(e) => updateSel(idx, { include: e.currentTarget.checked })} style={{ flexShrink: 0 }} />
-              <Image src={`/api/pipeline/collections/${col.id}/poster`} w={28} h={42} radius="sm" fit="cover" style={{ flexShrink: 0 }}
+              <Image src={`/api/pipeline/collections/${encodeURIComponent(col.id)}/poster`} w={28} h={42} radius="sm" fit="cover" style={{ flexShrink: 0 }}
                 fallbackSrc="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='42'%3E%3Crect width='28' height='42' fill='%23333'/%3E%3C/svg%3E" />
               <NumberInput value={sel.channel_number}
                 onChange={(v) => { const n = typeof v === 'number' ? v : parseInt(String(v)); if (!isNaN(n)) updateSel(idx, { channel_number: n }); }}

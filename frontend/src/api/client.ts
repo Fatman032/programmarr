@@ -255,7 +255,7 @@ export type ShowRef = { show: string } & ItemNumbers;
 // "decade" "1980"…). `kind: 'show'` makes it a rule about TV shows; the default is movies.
 export interface RuleValue { value: string; label: string; count: number }
 export interface RuleRef { rule: 'genre' | 'studio' | 'director' | 'actor' | 'decade'; value: string; kind?: 'show' }
-export type ContentItem = string | { collection: string } | MovieRef | ShowRef | MatchRef | FranchiseRef | RuleRef;
+export type ContentItem = string | { collection: string; server?: 'plex' | 'jellyfin' } | MovieRef | ShowRef | MatchRef | FranchiseRef | RuleRef;
 export function isRuleRef(c: ContentItem | null | undefined): c is RuleRef {
   return typeof c === 'object' && c !== null && 'rule' in c;
 }
@@ -270,7 +270,7 @@ export function ruleFromText(text: string): RuleRef | null {
 export function isMatchRef(c: ContentItem): c is MatchRef {
   return typeof c === 'object' && c !== null && 'match' in c;
 }
-export function isCollectionRef(c: ContentItem): c is { collection: string } {
+export function isCollectionRef(c: ContentItem): c is { collection: string; server?: 'plex' | 'jellyfin' } {
   return typeof c === 'object' && c !== null && 'collection' in c;
 }
 export interface ChannelIcon { mode: 'badge' | 'tmdb' | 'custom'; url?: string; pinned?: boolean }
@@ -431,8 +431,9 @@ export interface PromptOptions {
   exclude_types?: string[];
 }
 export interface PlexLibrary { key: string; title: string; type: 'movie' | 'show'; server?: string }
-export interface PlexCollection { id: string; name: string; count: number; section: string; summary: string; has_poster: boolean }
-export interface CollectionSelection { name: string; channel_number: number; include: boolean }
+/** A collection on Plex or Jellyfin (beta); `server` says which. */
+export interface PlexCollection { id: string; name: string; count: number; section: string; summary: string; has_poster: boolean; server?: 'plex' | 'jellyfin' }
+export interface CollectionSelection { name: string; channel_number: number; include: boolean; server?: 'plex' | 'jellyfin' }
 export interface LogEntry { name: string; size: number; modified: number }
 
 /** Persisted Planner intent saved to data/planner_state.json after each Build. */

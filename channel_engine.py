@@ -21,6 +21,8 @@ import uuid
 import urllib.error
 import urllib.request
 
+import jellyfin_api
+
 
 class ChannelEngineError(Exception):
     """Raised for unrecoverable engine conditions (e.g. no Plex source in Tunarr).
@@ -75,8 +77,21 @@ def set_tunarr_auth(username="", password=""):
 
 
 def set_tunarr_auth_from_config(cfg):
-    """Convenience for callers that already hold a loaded config dict."""
+    """Convenience for callers that already hold a loaded config dict. Also remembers the
+    Jellyfin connection (beta), which channel building needs for Jellyfin collections."""
     set_tunarr_auth(cfg.get("tunarr_username", ""), cfg.get("tunarr_password", ""))
+    set_jellyfin(cfg.get("jellyfin_url", ""), cfg.get("jellyfin_api_key", ""))
+
+
+# The Jellyfin server (BETA) a {"collection": ..} entry may come from. Module state for the
+# same reason as the Tunarr credential above.
+_JELLYFIN = None
+
+
+def set_jellyfin(url="", api_key=""):
+    """Set (or clear, with blanks) the Jellyfin connection used for Jellyfin collections."""
+    global _JELLYFIN
+    _JELLYFIN = (url.rstrip("/"), api_key) if url and api_key else None
 
 
 def tunarr_headers(extra=None):
@@ -321,20 +336,31 @@ def _build_id_index(movie_items, show_items):
         for key, items_for_key in by_id[kind].items():
             by_id[kind][key] = _best_copy(items_for_key)
 
-    # Plex's own answer about a collection carries a bare ratingKey, with no idea which
-    # Tunarr media source it belongs to — so also index Plex ids without that prefix.
-    by_plex_rating = {"movie": {}, "show": {}}
+    # A server's own answer about a collection carries a bare id (Plex's ratingKey, Jellyfin's
+    # item id), with no idea which Tunarr media source it belongs to — so also index server ids
+    # without that prefix.
+    by_server_bare = {server: {"movie": {}, "show": {}} for server in _SERVER_ID_TYPES}
     for kind in by_id:
         for (source, value), item in by_id[kind].items():
-            if source == "plex":
-                by_plex_rating[kind].setdefault(value.split(":", 1)[-1], []).append(item)
+            if source in by_server_bare:
+                by_server_bare[source][kind].setdefault(value.split(":", 1)[-1], []).append(item)
+    by_plex_rating = by_server_bare["plex"]
     by_title = {"movie": {}, "show": {}}
     for kind, items in kinds.items():
         for item in items:
             key = item["title"].lower().strip()
             if key:
                 by_title[kind].setdefault(key, []).append(item)
-    return {"by_id": by_id, "all": kinds, "by_plex_rating": by_plex_rating, "by_title": by_title}
+    return {"by_id": by_id, "all": kinds, "by_plex_rating": by_plex_rating, "by_server_bare": by_server_bare,
+            "by_title": by_title}
+
+
+def find_by_server_id(server, kind, server_id, id_index):
+    """The library item with this bare Plex / Jellyfin id, or None — also None when two
+    different servers of that type both have that id (the caller falls back to title + year)."""
+    bare = id_index.get("by_server_bare") or {"plex": id_index.get("by_plex_rating", {})}
+    found = bare.get(server, {}).get(kind, {}).get(str(server_id), [])
+    return found[0] if len(found) == 1 else None
 
 
 def find_by_plex_id(kind, plex_id, id_index):
@@ -826,8 +852,8 @@ def resolve_collection_members(plex_url, token, name, sections, cache):
             # size=0 from /library/metadata/{id}/children but work correctly via
             # /library/collections/{id}/children — try collections endpoint first.
             for children_path in (
-                f"/library/collections/{rating_key}/children",
-                f"/library/metadata/{rating_key}/children",
+                f"/library/collections/{rating_key}/children?includeGuids=1",
+                f"/library/metadata/{rating_key}/children?includeGuids=1",
             ):
                 items_data = plex_get(plex_url, token, children_path)
                 if items_data:
@@ -836,13 +862,42 @@ def resolve_collection_members(plex_url, token, name, sections, cache):
                         {"title": item["title"],
                          "kind": _PLEX_KIND.get(item.get("type")),
                          "plex_id": str(item["ratingKey"]) if item.get("ratingKey") is not None else None,
-                         "year": item.get("year")}
+                         "year": item.get("year"),
+                         "ids": _plex_guid_ids(item)}
                         for item in items if item.get("title")
                     ]
                     if members:
                         break
             break
 
+    cache[key] = members
+    return members
+
+
+def _plex_guid_ids(item):
+    """{"tmdb", "imdb"} from a Plex item's Guid list ("tmdb://278", "imdb://tt0111161")."""
+    ids = {}
+    for g in item.get("Guid") or []:
+        scheme, _, value = str(g.get("id") or "").partition("://")
+        if scheme in ("tmdb", "imdb") and value and scheme not in ids:
+            ids[scheme] = value
+    return ids
+
+
+def resolve_jellyfin_collection_members(name, cache):
+    """The members of a named Jellyfin collection (BETA, cached), as the same dicts a Plex
+    collection gives, with "ids": {"tmdb", "imdb", "jellyfin"}. [] when there's no such
+    collection, or Jellyfin isn't set up or couldn't be read."""
+    if _JELLYFIN is None:
+        return []
+    key = ("jellyfin-collection", name.lower().strip())
+    if key in cache:
+        return cache[key]
+    url, api_key = _JELLYFIN
+    if ("jellyfin-collections",) not in cache:
+        cache[("jellyfin-collections",)] = jellyfin_api.collections(url, api_key) or []
+    match = next((c for c in cache[("jellyfin-collections",)] if c["name"].lower() == key[1]), None)
+    members = (jellyfin_api.collection_members(url, api_key, match["id"]) or []) if match else []
     cache[key] = members
     return members
 
@@ -864,8 +919,18 @@ def _resolve_collection_member(member, movie_map, show_map, id_index):
     kind = member.get("kind")
     if id_index is None or kind is None:
         return resolve_title(member["title"], movie_map, show_map, kind=kind)
+    # The same order on every server: TMDB, IMDB, the server's own id, then title + year.
+    ids = member.get("ids") or {}
+    by_id = id_index["by_id"].get(kind, {})
+    for source in ("tmdb", "imdb"):
+        if ids.get(source) and (source, ids[source]) in by_id:
+            return by_id[(source, ids[source])]
     if member.get("plex_id"):
         item = find_by_plex_id(kind, member["plex_id"], id_index)
+        if item is not None:
+            return item
+    if ids.get("jellyfin"):
+        item = find_by_server_id("jellyfin", kind, ids["jellyfin"], id_index)
         if item is not None:
             return item
     item, _status, _ids = resolve_by_ids(kind, {}, member["title"], member.get("year"), id_index)
@@ -1011,9 +1076,11 @@ def resolve_content(content_list, movie_map, show_map,
       through `id_index` (see resolve_by_ids), so two things sharing a title can't be
       mixed up. A stale number heals from a spare; if nothing fits it is reported as
       missing and never guessed. Without `id_index` the title and type are used.
-    - A {"collection": "Name"} ref — expanded to its members via Plex. Each member is
-      matched by Plex's own id (and movie/show label) through `id_index`, not by title,
-      so a collection's "Wonder Woman" the movie can't turn into the show.
+    - A {"collection": "Name"} ref — expanded to its members via Plex or Jellyfin (beta), asked
+      again on every call. With "server": "plex" / "jellyfin" only that server is asked; without
+      it Plex is asked first, then Jellyfin. Each member is matched through `id_index` by TMDB,
+      IMDB, the server's own id, then title + year — never by a bare title alone, so a
+      collection's "Wonder Woman" the movie can't turn into the show.
     - A {"rule": "genre"|"studio"|"director"|"actor"|"decade", "value": "..."} entry
       (optionally "kind": "show") — Plex is asked for the current matches on every call, and
       each one is matched to Tunarr by Plex id. A match Tunarr hasn't scanned in yet is
@@ -1091,13 +1158,21 @@ def resolve_content(content_list, movie_map, show_map,
                 expanded_titles.append((entry[kind], kind))  # resolved in order below
         elif isinstance(entry, dict) and "collection" in entry:
             col_name = entry["collection"]
-            col_members = resolve_collection_members(plex_url, plex_token, col_name, plex_sections, collection_cache)
+            server = entry.get("server")
+            asked, col_members = [], []
+            if server in (None, "plex") and plex_url and plex_token:
+                asked.append("Plex")
+                col_members = resolve_collection_members(plex_url, plex_token, col_name, plex_sections, collection_cache)
+            if not col_members and server in (None, "jellyfin") and _JELLYFIN is not None:
+                asked.append("Jellyfin")
+                col_members = resolve_jellyfin_collection_members(col_name, collection_cache)
+            where = " or ".join(asked) or ("Jellyfin" if server == "jellyfin" else "Plex")
             if col_members:
-                expanded_titles.extend(col_members)  # dicts: matched by Plex id below
+                expanded_titles.extend(col_members)  # dicts: matched by their ids below
                 print(f"    Collection '{col_name}': {len(col_members)} titles")
             else:
-                print(f"    WARNING: Collection '{col_name}' not found in Plex")
-                _miss(f"[collection:{col_name}]", "collection not found in Plex")
+                print(f"    WARNING: Collection '{col_name}' not found in {where}")
+                _miss(f"[collection:{col_name}]", f"collection not found in {where}")
         elif isinstance(entry, dict) and "rule" in entry:
             label = _rule_label(entry)
             if entry.get("rule") not in RULE_KINDS or not str(entry.get("value") or "").strip():

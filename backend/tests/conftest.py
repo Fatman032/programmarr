@@ -19,6 +19,16 @@ for _p in (str(BACKEND), str(ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+@pytest.fixture(autouse=True)
+def _no_jellyfin_left_over():
+    """The engine remembers the Jellyfin connection (set from config, like the Tunarr login).
+    A test that loads a config with Jellyfin must not make later tests talk to that address."""
+    import channel_engine
+    channel_engine.set_jellyfin()
+    yield
+    channel_engine.set_jellyfin()
+
+
 # Exact header export.py writes (see export.py fieldnames). Multi-valued columns
 # (Genres / Director / Actors / Country / Mood / Style) are pipe-separated.
 CSV_FIELDS = ["Title", "Year", "Type", "Rating", "Genres",

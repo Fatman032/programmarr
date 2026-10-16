@@ -43,15 +43,14 @@ function optionLabel(a: AmbiguousChoice, o: AmbiguousChoice['options'][number]):
 }
 
 // What the Add box's first dropdown offers. Left blank it adds a plain title, as before.
-// Collections and live rules ask the media server directly; on Jellyfin (beta) they're not built yet,
-// so they're shown but can't be picked, instead of pretending to work.
+// Collections come from Plex or Jellyfin (beta). Live rules ask Plex directly; on a Jellyfin-only
+// setup they're not built yet, so they're shown but can't be picked, instead of pretending to work.
 function addTypes(isJellyfin: boolean) {
-  const notYet = isJellyfin ? ' — not on Jellyfin yet' : '';
   return [
     { group: 'Fixed', items: [
       { value: 'movie', label: 'Movie' },
       { value: 'show', label: 'TV Show' },
-      { value: 'collection', label: `Collection${notYet}`, disabled: isJellyfin },
+      { value: 'collection', label: 'Collection' },
     ] },
     { group: isJellyfin ? 'Live rule (not on Jellyfin yet)' : 'Live rule (asks Plex on every refresh)', items: [
       { value: 'genre', label: 'Genre', disabled: isJellyfin },
@@ -241,7 +240,7 @@ function ChannelModal({
   const [looking, setLooking] = useState(false);
   // The Add box: a kind (blank = plain title), movies or TV shows for a rule, and the value.
   const [addType, setAddType] = useState<string | null>(null);
-  // Live rules and collections ask Plex; a Jellyfin-only setup (beta) doesn't have them yet.
+  // Live rules ask Plex; a Jellyfin-only setup (beta) doesn't have them yet.
   const { hasPlex } = useMediaServers();
   const isJellyfin = !hasPlex;
   const [addKind, setAddKind] = useState<'movie' | 'show'>('movie');

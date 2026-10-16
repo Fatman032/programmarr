@@ -22,6 +22,7 @@ from test_id_index import _episode, _index, _movie
 def _plex(monkeypatch, members):
     """Fake Plex: one library holding one collection, "3 Stars and Up"."""
     def fake_plex_get(base_url, token, path, timeout=60):
+        path = path.split("?")[0]  # ?includeGuids=1 asks Plex for the TMDB / IMDB numbers too
         if path == "/library/sections/1/collections":
             return {"MediaContainer": {"Metadata": [{"title": "3 Stars and Up", "ratingKey": "9000"}]}}
         if path == "/library/collections/9000/children":
@@ -144,7 +145,7 @@ def test_collection_members_keep_kind_id_and_year(monkeypatch):
     _plex(monkeypatch, [_member("Wonder Woman", "movie", 116400, 2017)])
     members = channel_engine.resolve_collection_members(
         "http://plex", "t", "3 Stars and Up", [{"key": "1"}], {})
-    assert members == [{"title": "Wonder Woman", "kind": "movie", "plex_id": "116400", "year": 2017}]
+    assert members == [{"title": "Wonder Woman", "kind": "movie", "plex_id": "116400", "year": 2017, "ids": {}}]
 
 
 def test_resolve_collection_still_returns_plain_titles(monkeypatch):

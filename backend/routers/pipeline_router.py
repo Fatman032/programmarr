@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 import channel_engine  # noqa: E402
-import jellyfin_api    # noqa: E402  (Jellyfin beta: the library picker)
+import jellyfin_api    # noqa: E402  (Jellyfin beta: the library picker, collections)
 import scheduler  # noqa: E402  (backend/ on sys.path) — shared deploy_lock
 
 # scheduler's import added SCRIPTS_DIR to sys.path, so the pure pipeline modules
@@ -86,6 +86,7 @@ class CollectionSelection(BaseModel):
     name: str
     channel_number: int
     include: bool
+    server: str = ""   # "plex" / "jellyfin": which server the collection was picked from
 
 
 class DeploySelection(BaseModel):
@@ -2727,43 +2728,68 @@ async def run_sync_jellyfin():
 
 @router.get("/pipeline/collections")
 def list_collections():
+    """The collections of every connected server — Plex and/or Jellyfin (beta) — each with the
+    server it's on. A Jellyfin collection's id is "jellyfin:{id}" (for its poster)."""
     cfg = _load_config()
     plex_url = cfg.get("plex_url", "").rstrip("/")
     plex_token = cfg.get("plex_token", "")
-    if not plex_url or not plex_token:
-        raise HTTPException(400, "Plex not configured")
-    try:
-        sections_data = _plex_get(plex_url, plex_token, "/library/sections")
-        sections = sections_data["MediaContainer"].get("Directory", [])
-    except Exception as e:
-        raise HTTPException(502, f"Could not reach Plex: {e}")
+    jf_url, jf_key = cfg.get("jellyfin_url", "").rstrip("/"), cfg.get("jellyfin_api_key", "")
+    has_plex, has_jf = bool(plex_url and plex_token), bool(jf_url and jf_key)
+    if not has_plex and not has_jf:
+        raise HTTPException(400, "No Plex or Jellyfin server configured")
 
     results = []
-    seen: set[str] = set()
-    for section in sections:
+    errors = []
+    if has_plex:
         try:
-            col_data = _plex_get(plex_url, plex_token, f"/library/sections/{section['key']}/collections")
-            for c in col_data.get("MediaContainer", {}).get("Metadata", []):
-                name = c.get("title", "").strip()
-                if not name or name in seen:
-                    continue
-                seen.add(name)
-                results.append({
-                    "id": c.get("ratingKey", ""),
-                    "name": name,
-                    "count": int(c.get("childCount", 0)),
-                    "section": section.get("title", ""),
-                    "summary": c.get("summary", ""),
-                    "has_poster": bool(c.get("thumb", "")),
-                })
-        except Exception:
-            continue
+            sections_data = _plex_get(plex_url, plex_token, "/library/sections")
+            sections = sections_data["MediaContainer"].get("Directory", [])
+        except Exception as e:
+            sections = []
+            errors.append(f"Could not reach Plex: {e}")
+        seen: set[str] = set()
+        for section in sections:
+            try:
+                col_data = _plex_get(plex_url, plex_token, f"/library/sections/{section['key']}/collections")
+                for c in col_data.get("MediaContainer", {}).get("Metadata", []):
+                    name = c.get("title", "").strip()
+                    if not name or name in seen:
+                        continue
+                    seen.add(name)
+                    results.append({
+                        "id": c.get("ratingKey", ""),
+                        "name": name,
+                        "count": int(c.get("childCount", 0)),
+                        "section": f"Plex · {section.get('title', '')}" if has_jf else section.get("title", ""),
+                        "summary": c.get("summary", ""),
+                        "has_poster": bool(c.get("thumb", "")),
+                        "server": "plex",
+                    })
+            except Exception:
+                continue
+    if has_jf:
+        cols = jellyfin_api.collections(jf_url, jf_key)
+        if cols is None:
+            errors.append(f"Could not read Jellyfin at {jf_url} — check the Jellyfin URL and API key in Settings.")
+        for c in cols or []:
+            results.append({**c, "id": f"jellyfin:{c['id']}", "section": "Jellyfin", "server": "jellyfin"})
+
+    if not results and errors:
+        raise HTTPException(502, " ".join(errors))
     return results
 
 
 @router.get("/pipeline/collections/{collection_id}/poster")
 def collection_poster(collection_id: str):
     cfg = _load_config()
+    if collection_id.startswith("jellyfin:"):
+        jf_url, jf_key = cfg.get("jellyfin_url", "").rstrip("/"), cfg.get("jellyfin_api_key", "")
+        if not jf_url or not jf_key:
+            raise HTTPException(400, "Jellyfin not configured")
+        got = jellyfin_api.image(jf_url, jf_key, collection_id.split(":", 1)[1])
+        if not got:
+            raise HTTPException(502, "Could not fetch poster")
+        return Response(content=got[0], media_type=got[1])
     plex_url = cfg.get("plex_url", "").rstrip("/")
     plex_token = cfg.get("plex_token", "")
     if not plex_url or not plex_token:
@@ -2799,7 +2825,7 @@ def apply_collections(selections: list[CollectionSelection]):
             "number": s.channel_number,
             "name": s.name,
             "shuffle": "shuffle",
-            "content": [{"collection": s.name}],
+            "content": [{"collection": s.name, **({"server": s.server} if s.server in ("plex", "jellyfin") else {})}],
         }
         for s in sorted(included, key=lambda x: x.channel_number)
     ]

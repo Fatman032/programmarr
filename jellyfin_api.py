@@ -77,6 +77,56 @@ def items(base_url, api_key, parent_id, item_type, fields=ITEM_FIELDS):
     return data.get("Items") or []
 
 
+# What a collection member is, in Programmarr's words.
+_MEMBER_KINDS = {"movie": "movie", "series": "show"}
+
+
+def collections(base_url, api_key):
+    """Jellyfin's collections (BoxSets) as [{"id", "name", "count", "summary", "has_poster"}],
+    or None if Jellyfin couldn't be read."""
+    query = urllib.parse.urlencode({
+        "IncludeItemTypes": "BoxSet", "Recursive": "true", "Fields": "ChildCount,Overview",
+        "EnableUserData": "false", "SortBy": "SortName",
+    })
+    data = get(base_url, api_key, f"/Items?{query}")
+    if not isinstance(data, dict):
+        return None
+    return [{"id": c["Id"], "name": (c.get("Name") or "").strip(), "count": int(c.get("ChildCount") or 0),
+             "summary": c.get("Overview") or "", "has_poster": "Primary" in (c.get("ImageTags") or {})}
+            for c in data.get("Items") or [] if c.get("Id") and (c.get("Name") or "").strip()]
+
+
+def collection_members(base_url, api_key, collection_id):
+    """The movies and shows in one Jellyfin collection, as [{"title", "kind" ("movie" / "show" /
+    None for anything else), "year", "ids": {"tmdb", "imdb", "jellyfin"}}], or None if Jellyfin
+    couldn't be read. The ids are what Programmarr matches by (TMDB, then IMDB, then Jellyfin's own id)."""
+    query = urllib.parse.urlencode({"ParentId": collection_id, "Fields": "ProviderIds",
+                                    "EnableImages": "false", "EnableUserData": "false"})
+    data = get(base_url, api_key, f"/Items?{query}")
+    if not isinstance(data, dict):
+        return None
+    members = []
+    for it in data.get("Items") or []:
+        if not it.get("Name"):
+            continue
+        providers = {k.lower(): str(v) for k, v in (it.get("ProviderIds") or {}).items() if v}
+        ids = {"tmdb": providers.get("tmdb"), "imdb": providers.get("imdb"), "jellyfin": it.get("Id")}
+        members.append({"title": it["Name"], "kind": _MEMBER_KINDS.get((it.get("Type") or "").lower()),
+                        "year": it.get("ProductionYear"), "ids": {k: v for k, v in ids.items() if v}})
+    return members
+
+
+def image(base_url, api_key, item_id, timeout=10):
+    """(bytes, content type) of an item's poster, or None."""
+    req = urllib.request.Request(f"{base_url.rstrip('/')}/Items/{urllib.parse.quote(item_id)}/Images/Primary",
+                                 headers=headers(api_key))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read(), r.headers.get("Content-Type", "image/jpeg")
+    except Exception:
+        return None
+
+
 def episode_counts(base_url, api_key, parent_id):
     """{series id: (seasons, episodes)} for one TV library, from a single listing of its
     episodes. A season is counted once however many episodes it has. {} if it couldn't be read."""
