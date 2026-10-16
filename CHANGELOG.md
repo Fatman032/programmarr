@@ -4,6 +4,15 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **The "One more step — add your channels to Plex" box now shows when it should.** When Plex had no
+  DVR set up yet, or didn't take the new channels, the Plex sync printed the manual steps in its log
+  but still reported success, so the deploy screen said the Plex sync was complete and never showed
+  the box. It now reports that manual steps are needed, and the box appears with the XMLTV address.
+
 ## [1.1.1] — 2026-10-10 (my build)
 
 ### Fixed
