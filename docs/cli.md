@@ -75,6 +75,7 @@ export.py  →  generate_no_ai.py   →  create.py  →  fetch_images.py  →  s
 | `create.py` | Reads `channels.json` and deploys to Tunarr (delete-then-create). `--from N` scopes; `--protect N1,N2` preserves specific channels. |
 | `fetch_images.py` | Sets every channel's Tunarr icon (verified TMDB logos + generated badges). **Dry-run by default; `--apply` to commit.** |
 | `sync_plex.py` | Reconciles Tunarr's channel list into Plex's DVR mapping. Never deletes the DVR. |
+| `sync_jellyfin.py` | (Beta) Has Jellyfin refresh its Live TV guide from Tunarr and checks every channel arrived. Needs the one-time M3U tuner + XMLTV guide setup in Jellyfin. `--probe` changes nothing. |
 
 ### Example: nightly no-AI rebuild via cron
 

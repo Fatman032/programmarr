@@ -2042,7 +2042,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
   const [probing, setProbing] = useState(false);
   const [channelSels, setChannelSels] = useState<ChannelSel[]>([]);
 
-  const [phase, setPhase] = useState<'idle' | 'deploying' | 'art' | 'sync' | 'done'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'deploying' | 'art' | 'sync' | 'jfsync' | 'done'>('idle');
   const [deployLines, setDeployLines] = useState<string[]>([]);
   const [deployOk, setDeployOk] = useState(false);
   const [artLines, setArtLines] = useState<string[]>([]);
@@ -2051,6 +2051,9 @@ function DeployStep({ setup }: { setup: SetupState }) {
   const [syncStatus, setSyncStatus] = useState<CascadeStatus>('pending');
   const [showArt, setShowArt] = useState(false);
   const [showSync, setShowSync] = useState(false);
+  const [jfLines, setJfLines] = useState<string[]>([]);
+  const [jfStatus, setJfStatus] = useState<CascadeStatus>('pending');
+  const [showJfSync, setShowJfSync] = useState(false);
 
   // Preview gate: fetch the diff summary before the deploy button is shown.
   const [preview, setPreview] = useState<DeployPreviewResult | null>(null);
@@ -2062,8 +2065,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
 
   const [config, setConfig] = useState<Record<string, string>>({});
   useEffect(() => { api.getConfig().then(setConfig).catch(() => {}); }, []);
-  // Which servers get the channels. Plex: synced automatically (after its one-time DVR setup).
-  // Jellyfin (beta): no automatic sync yet, so the summary shows its one-time Live TV steps.
+  // Which servers get the channels. Each is synced automatically after its one-time setup:
+  // Plex's DVR, Jellyfin's Live TV (beta). The setup steps are shown only if a sync fails.
   const hasPlex = !!((config.plex_url && config.plex_token) || (config as any).plex_servers?.length);
   const hasJellyfin = !!(config.jellyfin_url && config.jellyfin_api_key);
 
@@ -2191,13 +2194,22 @@ function DeployStep({ setup }: { setup: SetupState }) {
       setArtStatus('skip');
     }
 
-    // 3) Sync Plex (Jellyfin's Live TV is set up by hand for now, see the summary)
+    // 3) Sync Plex
     if (!hasPlex) {
       setSyncStatus('skip');
     } else {
       setPhase('sync'); setSyncStatus('running'); setSyncLines([]);
       const scode = await streamPipeline('/pipeline/sync', {}, (ev) => { if (ev.type === 'line') setSyncLines(l => [...l, ev.text]); });
       setSyncStatus(scode === 0 ? 'ok' : 'warn');
+    }
+
+    // 4) Jellyfin (beta): refresh its Live TV guide, the same way
+    if (!hasJellyfin) {
+      setJfStatus('skip');
+    } else {
+      setPhase('jfsync'); setJfStatus('running'); setJfLines([]);
+      const jcode = await streamPipeline('/pipeline/sync-jellyfin', {}, (ev) => { if (ev.type === 'line') setJfLines(l => [...l, ev.text]); });
+      setJfStatus(jcode === 0 ? 'ok' : 'warn');
     }
 
     setPhase('done');
@@ -2210,7 +2222,14 @@ function DeployStep({ setup }: { setup: SetupState }) {
   const xmltvUrl = tunarrUrl ? `${tunarrUrl.replace(/\/$/, '')}/api/xmltv.xml` : '';
   const m3uUrl = tunarrUrl ? `${tunarrUrl.replace(/\/$/, '')}/api/channels.m3u` : '';
   const jellyfinWebUrl = config.jellyfin_url ? `${config.jellyfin_url.replace(/\/$/, '')}/web/` : '';
-  const cascadeRunning = phase === 'deploying' || phase === 'art' || phase === 'sync';
+  const cascadeRunning = phase === 'deploying' || phase === 'art' || phase === 'sync' || phase === 'jfsync';
+  const cascadeLines = phase === 'deploying' ? deployLines : phase === 'art' ? artLines : phase === 'jfsync' ? jfLines : syncLines;
+  const afterDeploy = [setup.fetchArt && 'channel art', hasPlex && 'the Plex sync', hasJellyfin && 'the Jellyfin Live TV refresh']
+    .filter(Boolean) as string[];
+  const afterDeployText = afterDeploy.length
+    ? ` ${(afterDeploy.length > 1 ? `${afterDeploy.slice(0, -1).join(', ')} and ${afterDeploy[afterDeploy.length - 1]}` : afterDeploy[0])
+        .replace(/^./, (c) => c.toUpperCase())} ${afterDeploy.length > 1 ? 'run' : 'runs'} automatically right after.`
+    : '';
 
   function StatusRow({ status, label, children }: { status: CascadeStatus; label: string; children?: React.ReactNode }) {
     const map: Record<CascadeStatus, { icon: React.ReactNode; color: string }> = {
@@ -2233,6 +2252,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
   // ── Done summary ──
   if (phase === 'done') {
     const syncFailed = deployOk && syncStatus === 'warn';
+    const jfSyncFailed = deployOk && jfStatus === 'warn';
     return (
       <Stack gap="lg">
         <ResultsCard
@@ -2256,17 +2276,23 @@ function DeployStep({ setup }: { setup: SetupState }) {
               </StatusRow>
             )}
             {deployOk && syncStatus === 'ok' && <StatusRow status="ok" label="Plex sync complete — your channels are in the guide" />}
+            {deployOk && jfStatus === 'ok' && (
+              <StatusRow status="ok" label="Jellyfin Live TV refreshed — your channels are in the guide">
+                <Button size="compact-xs" variant="subtle" color="gray" onClick={() => setShowJfSync(v => !v)}>details</Button>
+              </StatusRow>
+            )}
           </Stack>
 
           {deployOk && <Collapse in={showArt}><Box mb="md"><TerminalOutput lines={artLines} done success={artStatus === 'ok'} height={180} /></Box></Collapse>}
+          {jfStatus === 'ok' && <Collapse in={showJfSync}><Box mb="md"><TerminalOutput lines={jfLines} done success height={180} /></Box></Collapse>}
 
-          {/* Jellyfin (beta): no automatic Live TV sync yet — the one-time steps, with the addresses to paste. */}
-          {deployOk && hasJellyfin && (
+          {/* Jellyfin (beta): can't-miss one-time steps when the Live TV refresh didn't work, like Plex's below. */}
+          {jfSyncFailed && (
             <Alert color="yellow" variant="light" icon={<IconAlertCircle size={18} />} mb="md"
               title="One more step — add your channels to Jellyfin Live TV">
               <Text size="sm" mb="xs">
-                Your channels are live in <b>Tunarr</b>. Jellyfin doesn’t pick them up on its own yet (automatic
-                setup is coming in a later beta), so do this once:
+                Your channels are live in <b>Tunarr</b>, but Jellyfin couldn’t add them to its guide automatically.
+                Until you do this once, the channels <b>won’t appear in Jellyfin Live TV</b>:
               </Text>
               <Stack gap={2} mb="sm">
                 <Text size="sm">1. Open <b>Jellyfin → Dashboard → Live TV</b></Text>
@@ -2295,7 +2321,11 @@ function DeployStep({ setup }: { setup: SetupState }) {
               )}
               <Text size="sm" mb="sm">Click <b>Save</b>.</Text>
               <Text size="sm" mb="xs">4. Click <b>Refresh Guide Data</b>. Your channels will appear under Live TV.</Text>
-              {jellyfinWebUrl && <Button component="a" href={jellyfinWebUrl} target="_blank" rel="noreferrer" variant="light" color="grape" size="xs" leftSection={<IconExternalLink size={13} />}>Open Jellyfin</Button>}
+              <Group gap="sm">
+                {jellyfinWebUrl && <Button component="a" href={jellyfinWebUrl} target="_blank" rel="noreferrer" variant="light" color="grape" size="xs" leftSection={<IconExternalLink size={13} />}>Open Jellyfin</Button>}
+                <Button size="compact-xs" variant="subtle" color="gray" onClick={() => setShowJfSync(v => !v)}>{showJfSync ? 'Hide' : 'Show'} sync log</Button>
+              </Group>
+              <Collapse in={showJfSync}><Box mt="sm"><TerminalOutput lines={jfLines} done success={false} height={180} /></Box></Collapse>
             </Alert>
           )}
 
@@ -2336,6 +2366,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
             <Group mb="md" gap="sm">
               <Button component="a" href={tunarrUrl} target="_blank" rel="noreferrer" variant="light" color="blue" size="sm" leftSection={<IconExternalLink size={14} />}>Open Tunarr</Button>
               {!syncFailed && plexLiveTvUrl && <Button component="a" href={plexLiveTvUrl} target="_blank" rel="noreferrer" variant="light" color="grape" size="sm" leftSection={<IconExternalLink size={14} />}>Open Plex Live TV</Button>}
+              {!jfSyncFailed && jellyfinWebUrl && <Button component="a" href={jellyfinWebUrl} target="_blank" rel="noreferrer" variant="light" color="grape" size="sm" leftSection={<IconExternalLink size={14} />}>Open Jellyfin</Button>}
             </Group>
           )}
           <Group>
@@ -2415,10 +2446,10 @@ function DeployStep({ setup }: { setup: SetupState }) {
               {cascadeRunning && (
                 <>
                   <StatusRow status={phase === 'deploying' ? 'running' : 'ok'} label="Applying surgical diff to Tunarr" />
-                  {setup.fetchArt && <StatusRow status={phase === 'art' ? 'running' : phase === 'sync' ? 'ok' : 'pending'} label="Fetching channel art" />}
-                  {hasPlex && <StatusRow status={phase === 'sync' ? 'running' : 'pending'} label="Syncing with Plex" />}{hasJellyfin && <StatusRow status="skip" label="Jellyfin Live TV — one-time steps at the end" />}
+                  {setup.fetchArt && <StatusRow status={phase === 'art' ? 'running' : phase === 'sync' || phase === 'jfsync' ? 'ok' : 'pending'} label="Fetching channel art" />}
+                  {hasPlex && <StatusRow status={phase === 'sync' ? 'running' : phase === 'jfsync' ? syncStatus : 'pending'} label="Syncing with Plex" />}{hasJellyfin && <StatusRow status={phase === 'jfsync' ? 'running' : 'pending'} label="Refreshing Jellyfin Live TV" />}
                   <TerminalOutput
-                    lines={phase === 'deploying' ? deployLines : phase === 'art' ? artLines : syncLines}
+                    lines={cascadeLines}
                     done={false} success height={200} />
                 </>
               )}
@@ -2492,9 +2523,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
           )}
           <Card withBorder p="lg">
             <Text size="sm" c="dimmed" mb="md">
-              Deploying writes to Tunarr now.{hasJellyfin
-                ? `${setup.fetchArt ? ' Channel art is fetched right after.' : ''}${hasPlex ? ' Plex sync runs automatically.' : ''} Then you add the channels to Jellyfin Live TV once (the steps are shown at the end).`
-                : `${setup.fetchArt ? ' Channel art and' : ''} Plex sync run automatically right after.`}
+              Deploying writes to Tunarr now.{afterDeployText}
             </Text>
 
             {/* Preview gate */}
@@ -2549,10 +2578,10 @@ function DeployStep({ setup }: { setup: SetupState }) {
             {cascadeRunning && (
               <Stack gap="xs" mb="md">
                 <StatusRow status={phase === 'deploying' ? 'running' : 'ok'} label="Deploying to Tunarr" />
-                {setup.fetchArt && <StatusRow status={phase === 'art' ? 'running' : phase === 'sync' ? 'ok' : 'pending'} label="Fetching channel art" />}
-                {hasPlex && <StatusRow status={phase === 'sync' ? 'running' : 'pending'} label="Syncing with Plex" />}{hasJellyfin && <StatusRow status="skip" label="Jellyfin Live TV — one-time steps at the end" />}
+                {setup.fetchArt && <StatusRow status={phase === 'art' ? 'running' : phase === 'sync' || phase === 'jfsync' ? 'ok' : 'pending'} label="Fetching channel art" />}
+                {hasPlex && <StatusRow status={phase === 'sync' ? 'running' : phase === 'jfsync' ? syncStatus : 'pending'} label="Syncing with Plex" />}{hasJellyfin && <StatusRow status={phase === 'jfsync' ? 'running' : 'pending'} label="Refreshing Jellyfin Live TV" />}
                 <TerminalOutput
-                  lines={phase === 'deploying' ? deployLines : phase === 'art' ? artLines : syncLines}
+                  lines={cascadeLines}
                   done={false} success height={200} />
               </Stack>
             )}

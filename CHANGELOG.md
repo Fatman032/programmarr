@@ -34,8 +34,14 @@ All notable changes to Programmarr are documented here. This project follows
 - **The screens name your server (BETA).** On a Jellyfin setup the library scan, the channel editor, the
   collections step and the deploy steps say Jellyfin instead of Plex. Features that aren't built for
   Jellyfin yet (collections, live rules) are shown but say "not on Jellyfin yet" instead of failing, and
-  the deploy skips the Plex sync and ends with the one-time Jellyfin Live TV steps (M3U tuner + XMLTV
-  guide addresses from Tunarr, with copy buttons).
+  the deploy skips the Plex sync on a Jellyfin-only setup.
+- **Jellyfin Live TV sync (BETA)**, the same way as the Plex DVR sync. You add Tunarr to Jellyfin's Live
+  TV once by hand (an M3U tuner and an XMLTV guide). After that, every deploy has Jellyfin refresh its
+  guide (its own Refresh Guide task), so new channels appear right away, and checks that every Tunarr
+  channel made it. Only when Tunarr isn't set up in Jellyfin yet, or channels are still missing, does
+  the deploy end with the one-time steps (the M3U and XMLTV addresses with copy buttons, using
+  Jellyfin's own labels) and the sync log. New script `sync_jellyfin.py` (`--probe` shows the state
+  without changing anything).
 - **The export file is now `library.csv`** (it was `plex_library.csv`), since it can come from Plex,
   Jellyfin, or both. An install that hasn't run Export since still reads its old `plex_library.csv`
   until the next Export, and the old file is left in place so an older version still finds it.
@@ -44,7 +50,7 @@ All notable changes to Programmarr are documented here. This project follows
 ### Notes
 
 - Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.
-- Still Plex-only for now: collections, live rules, and the Live TV (DVR) sync.
+- Still Plex-only for now: collections and live rules.
 - Checked on a Jellyfin library of 1,629 movies and 113 shows through Tunarr 2026.10.1.
 
 ## [1.1.1] — 2026-10-10 (my build)

@@ -181,6 +181,7 @@ and the code — don't restate them here.
   `scripts/make_badge_assets.py`). Badges carry the channel name because Plex hides text
   labels once an icon is set. **Module + `badge_assets/` must stay in the Dockerfile `COPY` lines.**
 - **`sync_plex.py`** — reconciles Tunarr's XMLTV channel list into Plex's DVR mapping (read-then-update; **never deletes** the DVR). Falls back to printing the XMLTV URL + manual steps.
+- **`sync_jellyfin.py`** (beta) — the Jellyfin counterpart: finds Tunarr's M3U tuner + XMLTV guide in Jellyfin's Live TV settings, runs Jellyfin's `RefreshGuide` scheduled task, then checks every Tunarr channel number is in `/LiveTv/Channels`. Exit 2 (deploy screen shows the one-time steps) when the tuner/guide is missing or channels are still missing; exit 1 when Jellyfin/Tunarr can't be read.
 
 ## Channel Numbering Scheme
 

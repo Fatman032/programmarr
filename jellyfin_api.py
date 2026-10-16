@@ -39,6 +39,20 @@ def get(base_url, api_key, path, timeout=120):
         return None
 
 
+def post(base_url, api_key, path, timeout=30):
+    """POST to a Jellyfin API path with no body. True if Jellyfin accepted it (failures are printed)."""
+    req = urllib.request.Request(base_url.rstrip("/") + path, data=b"", method="POST", headers=headers(api_key))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout):
+            return True
+    except urllib.error.HTTPError as e:
+        print(f"  ! Jellyfin HTTP {e.code} [{path[:60]}]")
+        return False
+    except Exception as e:
+        print(f"  ! Jellyfin error [{path[:60]}]: {e}")
+        return False
+
+
 def libraries(base_url, api_key):
     """Jellyfin's libraries as [{"id", "name", "type": "movie" | "show" | None}], or None if
     Jellyfin couldn't be read. Music, books, home videos and the like come back with type None."""

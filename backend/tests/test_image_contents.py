@@ -49,3 +49,12 @@ def test_every_root_module_the_app_imports_is_in_the_image():
             if f"{name}.py" not in copied:
                 missing.add(f"{name}.py (imported by {path.relative_to(ROOT).as_posix()})")
     assert not missing, "add these to the Dockerfile COPY line: " + ", ".join(sorted(missing))
+
+
+def test_every_script_the_app_runs_is_in_the_image():
+    """The pipeline runs some root scripts by name (sync_plex.py, sync_jellyfin.py, ...)."""
+    copied = _copied_root_files()
+    text = (ROOT / "backend" / "routers" / "pipeline_router.py").read_text(encoding="utf-8")
+    run = set(re.findall(r'_stream\(\s*"([\w.]+\.py)"', text))
+    assert {"sync_plex.py", "sync_jellyfin.py", "export.py"} <= run
+    assert not run - copied, "add these to the Dockerfile COPY line: " + ", ".join(sorted(run - copied))

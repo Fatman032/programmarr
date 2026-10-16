@@ -2719,6 +2719,12 @@ async def run_sync():
     return _sse(_stream("sync_plex.py", [], "sync"))
 
 
+@router.post("/pipeline/sync-jellyfin")
+async def run_sync_jellyfin():
+    """Refresh Jellyfin's Live TV guide after a deploy (BETA) — the Jellyfin side of the Plex sync."""
+    return _sse(_stream("sync_jellyfin.py", [], "sync_jellyfin"))
+
+
 @router.get("/pipeline/collections")
 def list_collections():
     cfg = _load_config()
