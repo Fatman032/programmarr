@@ -29,6 +29,7 @@ from channel_engine import (
     api,
     build_library_index_with_ids,
     build_schedule,
+    channel_server,
     commercial_settings,
     filler_collection,
     get_plex_sections,
@@ -306,6 +307,7 @@ def main():
             plex_url=plex_url, plex_token=plex_token,
             plex_sections=plex_sections, collection_cache=collection_cache,
             franchise_index=franchise_index, id_index=id_index,
+            server=channel_server(ch, plex_url, plex_token),
         )
 
         if not resolved:

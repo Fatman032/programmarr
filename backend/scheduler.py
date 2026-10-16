@@ -261,6 +261,7 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
             plex_url=plex_url, plex_token=plex_token,
             plex_sections=plex_sections, collection_cache=collection_cache,
             franchise_index=franchise_index, id_index=id_index, report=report,
+            server=channel_engine.channel_server(ch, plex_url, plex_token),
         )
         if apply:  # a dry run isn't a real check, so it must not rewrite what the person sees
             notices.record(DATA_DIR, number, report)

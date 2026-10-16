@@ -403,24 +403,27 @@ def _scan_tunarr_library(tunarr_url):
         attempted_libs += 1
         return programs
 
-    def _index_movies(programs):
+    def _index_movies(programs, server):
         for p in programs:
             title = p.get("program", {}).get("title", "")
             if title:
                 key = title.lower().strip()
                 if key not in movie_map:
                     movie_map[key] = p
-            movie_items.append(_movie_item(p))
+            item = _movie_item(p)
+            item["server"] = server   # the server this copy plays from
+            movie_items.append(item)
 
     for source in plex_sources:
         source_name = source.get("name", "Plex")
+        server = source.get("type")   # "plex" / "jellyfin"
         libs = source.get("libraries", [])
         # A Plex server can expose MULTIPLE movie or shows libraries (e.g. 'TV Shows' AND
         # 'Cartoons'). Index every enabled one of each kind across all sources — picking only
         # the first source/library silently drops whole libraries.
         movie_libs = [l for l in libs if l.get("mediaType") in ("movie", "movies") and l.get("enabled")]
         tv_libs    = [l for l in libs if l.get("mediaType") == "shows"              and l.get("enabled")]
-        other_libs += [(source_name, l) for l in libs
+        other_libs += [(source_name, server, l) for l in libs
                        if l.get("mediaType") == "other_videos" and l.get("enabled")]
 
         if movie_libs:
@@ -428,7 +431,7 @@ def _scan_tunarr_library(tunarr_url):
             for lib in movie_libs:
                 programs = _fetch(lib, source_name)
                 if programs is not None:
-                    _index_movies(programs)
+                    _index_movies(programs, server)
 
         if tv_libs:
             print(f"  Indexing TV shows ({source_name})...")
@@ -445,22 +448,23 @@ def _scan_tunarr_library(tunarr_url):
                         continue
                     key = title.lower().strip()
                     c = tv_candidates.setdefault(key, {"title": title, "by_lib": {}})
-                    entry = c["by_lib"].setdefault(lib["id"], {"showId": show_id, "programs": []})
+                    entry = c["by_lib"].setdefault(lib["id"], {"showId": show_id, "programs": [], "server": server})
                     entry["programs"].append(p)
 
                     item = shows_by_uuid.get(show_id)
                     if item is None:
                         item = shows_by_uuid[show_id] = _show_item(show, show_id)
+                        item["server"] = server
                     item["programs"].append(p)
 
     # Family videos and the like: Tunarr files them as "other_videos", and a movie slot
     # schedules them like movies. Read after the real movie libraries so that, in the
     # by-title view (first one wins), a home video can never displace a same-named movie.
-    for source_name, lib in other_libs:
+    for source_name, server, lib in other_libs:
         print(f"  Indexing other videos ({source_name}/{lib.get('name', lib['id'])})...")
         programs = _fetch(lib, source_name)
         if programs is not None:
-            _index_movies(programs)
+            _index_movies(programs, server)
 
     return movie_map, movie_items, tv_candidates, list(shows_by_uuid.values()), failed_libs, attempted_libs
 
@@ -513,7 +517,72 @@ def build_library_index_with_ids(tunarr_url):
     print(f"  Indexed {len(movie_map)} movies")
     show_map = _collapse_show_map(tv_candidates)
     print(f"  Indexed {len(show_map)} TV shows")
-    return movie_map, show_map, _build_id_index(movie_items, show_items)
+    id_index = _build_id_index(movie_items, show_items)
+    id_index["_scan"] = (movie_items, tv_candidates, show_items)   # for library_for_server
+    return movie_map, show_map, id_index
+
+
+# ── One server per channel ─────────────────────────────────────────────────────────
+# A Tunarr can hold the same movie twice — once from Plex, once from Jellyfin (beta). Each
+# channel is tagged with the ONE server its content plays from ("server": "plex" / "jellyfin"),
+# and only that server's copies are used for it, so a channel never mixes the two.
+
+SERVERS = ("plex", "jellyfin")
+
+
+def default_server(has_plex, has_jellyfin):
+    """The server an untagged channel belongs to: Plex if it's set up (every version before
+    Jellyfin support could only use Plex), else Jellyfin."""
+    return "jellyfin" if has_jellyfin and not has_plex else "plex"
+
+
+def tag_channels(channels, server):
+    """Tag every channel that has no valid "server" yet with `server`. Returns how many changed."""
+    changed = 0
+    for ch in channels or []:
+        if isinstance(ch, dict) and ch.get("server") not in SERVERS:
+            ch["server"] = server
+            changed += 1
+    return changed
+
+
+def channel_server(ch, plex_url=None, token=None):
+    """The server a channel's content plays from: its tag, else the default for what's set up."""
+    if isinstance(ch, dict) and ch.get("server") in SERVERS:
+        return ch["server"]
+    return default_server(bool(plex_url and token), _JELLYFIN is not None)
+
+
+def library_for_server(movie_map, show_map, id_index, server):
+    """(movie_map, show_map, id_index) limited to the copies Tunarr plays from `server`.
+    Unchanged when Tunarr holds only one server's copies (the usual case), when `server` has
+    none there at all, or when the index doesn't know where its copies come from."""
+    scan = (id_index or {}).get("_scan")
+    if not server or not scan:
+        return movie_map, show_map, id_index
+    cached = id_index.setdefault("_by_server", {})
+    if server in cached:
+        return cached[server]
+    movie_items, tv_candidates, show_items = scan
+    present = {it.get("server") for it in movie_items + show_items}
+    if len(present) <= 1 or server not in present:
+        return movie_map, show_map, id_index   # nothing to narrow (never cached: callers pass their own maps)
+    m_items = [it for it in movie_items if it.get("server") == server]
+    s_items = [it for it in show_items if it.get("server") == server]
+    m_map = {}
+    for it in m_items:
+        key = it["title"].lower().strip()
+        if key and key not in m_map:
+            m_map[key] = it["programs"][0]
+    tvc = {}
+    for key, c in tv_candidates.items():
+        by_lib = {lid: e for lid, e in c["by_lib"].items() if e.get("server") == server}
+        if by_lib:
+            tvc[key] = {"title": c["title"], "by_lib": by_lib}
+    idx = _build_id_index(m_items, s_items)
+    idx["_scan"] = (m_items, tvc, s_items)
+    cached[server] = (m_map, _collapse_show_map(tvc), idx)
+    return cached[server]
 
 
 def find_by_title(title, id_index, kind=None):
@@ -1189,7 +1258,7 @@ def _item_keys(item):
 
 def resolve_content(content_list, movie_map, show_map,
                     plex_url=None, plex_token=None, plex_sections=None, collection_cache=None,
-                    franchise_index=None, id_index=None, report=None):
+                    franchise_index=None, id_index=None, report=None, server=None):
     """Resolve a channel's content list into (resolved_items, missing).
 
     Each entry is one of:
@@ -1235,6 +1304,9 @@ def resolve_content(content_list, movie_map, show_map,
     """
     plex_sections = plex_sections or []
     collection_cache = collection_cache if collection_cache is not None else {}
+    # One server per channel: only that server's copies, and its rules / collections ask it.
+    if server in SERVERS:
+        movie_map, show_map, id_index = library_for_server(movie_map, show_map, id_index, server)
 
     # Expand {"collection": "Name"} → member titles; {"match": ...} → resolved items
     expanded_titles = []
@@ -1284,15 +1356,15 @@ def resolve_content(content_list, movie_map, show_map,
                 expanded_titles.append((entry[kind], kind))  # resolved in order below
         elif isinstance(entry, dict) and "collection" in entry:
             col_name = entry["collection"]
-            server = entry.get("server")
+            col_server = entry.get("server") if entry.get("server") in SERVERS else server
             asked, col_members = [], []
-            if server in (None, "plex") and plex_url and plex_token:
+            if col_server in (None, "plex") and plex_url and plex_token:
                 asked.append("Plex")
                 col_members = resolve_collection_members(plex_url, plex_token, col_name, plex_sections, collection_cache)
-            if not col_members and server in (None, "jellyfin") and _JELLYFIN is not None:
+            if not col_members and col_server in (None, "jellyfin") and _JELLYFIN is not None:
                 asked.append("Jellyfin")
                 col_members = resolve_jellyfin_collection_members(col_name, collection_cache)
-            where = " or ".join(asked) or ("Jellyfin" if server == "jellyfin" else "Plex")
+            where = " or ".join(asked) or ("Jellyfin" if col_server == "jellyfin" else "Plex")
             if col_members:
                 expanded_titles.extend(col_members)  # dicts: matched by their ids below
                 print(f"    Collection '{col_name}': {len(col_members)} titles")
@@ -1300,6 +1372,8 @@ def resolve_content(content_list, movie_map, show_map,
                 print(f"    WARNING: Collection '{col_name}' not found in {where}")
                 _miss(f"[collection:{col_name}]", f"collection not found in {where}")
         elif isinstance(entry, dict) and "rule" in entry:
+            if server in SERVERS and entry.get("server") not in SERVERS:
+                entry = {**entry, "server": server}   # a rule asks its channel's server
             label = _rule_label(entry)
             if entry.get("rule") not in RULE_KINDS or not str(entry.get("value") or "").strip():
                 print(f"    WARNING: unsupported rule: {entry}")

@@ -1,6 +1,6 @@
 import {
   ActionIcon, Alert, Badge, Box, Button, Card, Center, Checkbox, Chip, Code, Collapse, Divider, Group,
-  Image, Loader, Modal, MultiSelect, NumberInput, ScrollArea, Select, SimpleGrid, Stack,
+  Image, Loader, Modal, MultiSelect, NumberInput, ScrollArea, SegmentedControl, Select, SimpleGrid, Stack,
   Stepper, Switch, Text, TextInput, Textarea, ThemeIcon, Title, Tooltip, UnstyledButton,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
@@ -58,6 +58,8 @@ interface SetupState {
   fetchArt: boolean;
   protectedNums: number[];
   start: number;
+  /** The ONE server these channels play from (beta). Asked only when Plex and Jellyfin are both set up. */
+  server: 'plex' | 'jellyfin';
 }
 
 // Stable candidate ids for the selected-map.
@@ -181,8 +183,17 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
   onNuke: () => void;
 }) {
   const [hasTmdb, setHasTmdb] = useState(false);
-  // Collections come from whichever servers you use: Plex, Jellyfin (beta), or both.
-  const { name: serverName } = useMediaServers();
+  // Each channel plays from ONE server. With both set up, you pick which for this run.
+  const { hasPlex, hasJellyfin } = useMediaServers();
+  const bothServers = hasPlex && hasJellyfin;
+  const serverName = setup.server === 'jellyfin' ? 'Jellyfin' : 'Plex';
+  useEffect(() => {
+    if (!bothServers) {
+      const only = hasJellyfin && !hasPlex ? 'jellyfin' : 'plex';
+      if (setup.server !== only) onChange({ server: only });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPlex, hasJellyfin]);
   const [tunarrChannels, setTunarrChannels] = useState<{ number: number; name: string }[]>([]);
   const [checkedNums, setCheckedNums] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -267,6 +278,22 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
               New channels will be numbered from #{setup.start} (above your existing {checkedCount} channels).
             </Text>
           )}
+        </Card>
+      )}
+
+      {/* Server: only when both are set up — every channel plays from one of them */}
+      {bothServers && (
+        <Card withBorder p="md">
+          <Text fw={700} mb={4}>Which server are these channels for?</Text>
+          <Text size="xs" c="dimmed" mb="sm">
+            Each channel plays from one server. The library scan, the Planner and collections use only this one.
+            Either way the channels show up in both Plex and Jellyfin Live TV.
+          </Text>
+          <SegmentedControl
+            value={setup.server}
+            onChange={(v) => onChange({ server: v as 'plex' | 'jellyfin' })}
+            data={[{ value: 'plex', label: 'Plex' }, { value: 'jellyfin', label: 'Jellyfin (beta)' }]}
+          />
         </Card>
       )}
 
@@ -394,8 +421,10 @@ function SetupStep({ setup, onChange, onDone, onNuke }: {
 
 // ── Export step ──────────────────────────────────────────────────────────────────
 
-function ExportStep({ onDone }: { onDone: () => void }) {
-  const { name: serverName } = useMediaServers();
+function ExportStep({ onDone, server }: { onDone: () => void; server: 'plex' | 'jellyfin' }) {
+  const { hasPlex, hasJellyfin } = useMediaServers();
+  const bothServers = hasPlex && hasJellyfin;
+  const serverName = server === 'jellyfin' ? 'Jellyfin' : 'Plex';
   const [libraries, setLibraries] = useState<PlexLibrary[]>([]);
   const [libSels, setLibSels] = useState<Record<string, boolean>>({});
   const [libLoading, setLibLoading] = useState(true);
@@ -410,7 +439,12 @@ function ExportStep({ onDone }: { onDone: () => void }) {
 
   useEffect(() => {
     api.getLibraries()
-      .then(libs => { setLibraries(libs); setLibSels(Object.fromEntries(libs.map(l => [l.key, true]))); })
+      .then(all => {
+        // With both servers set up, only the libraries of the server picked in Setup.
+        const other = server === 'plex' ? 'jellyfin:' : 'plex:';
+        const libs = bothServers ? all.filter(l => !l.key.startsWith(other)) : all;
+        setLibraries(libs); setLibSels(Object.fromEntries(libs.map(l => [l.key, true])));
+      })
       .catch(err => setLibError(err.message))
       .finally(() => setLibLoading(false));
   }, []);
@@ -1194,7 +1228,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
       const commercials: Commercials | undefined = commEnabled
         ? buildCommercials(commListIds, fillerLists, Number(commPad))
         : undefined;
-      const r = await api.composeChannels(exactSpecs, setup.start, { live: autoUpdate, commercials });
+      const r = await api.composeChannels(exactSpecs, setup.start, { live: autoUpdate, commercials, server: setup.server });
       if (r.skipped.length) notifications.show({ message: `${r.skipped.length} candidate(s) skipped — no matching titles`, color: 'yellow' });
       const extras = [commercials && 'commercials', autoUpdate && 'auto-update'].filter(Boolean).join(' + ');
       notifications.show({ message: `${r.count} channels built${extras ? ` (${extras})` : ''}`, color: 'green', icon: <IconCheck size={14} /> });
@@ -1919,8 +1953,10 @@ function DiscoverStep({ discover, curatePools, onDone }: { discover: boolean; cu
 
 type CollectionSel = { id: string; name: string; channel_number: number; include: boolean; server?: 'plex' | 'jellyfin' };
 
-function CollectionsStep({ start, onDone }: { start: number; onDone: () => void }) {
-  const { name: serverName } = useMediaServers();  // Plex, Jellyfin (beta), or both
+function CollectionsStep({ start, onDone, server }: { start: number; onDone: () => void; server: 'plex' | 'jellyfin' }) {
+  const { hasPlex, hasJellyfin } = useMediaServers();
+  const bothServers = hasPlex && hasJellyfin;
+  const serverName = server === 'jellyfin' ? 'Jellyfin' : 'Plex';
   const [collections, setCollections] = useState<PlexCollection[]>([]);
   const [selections, setSelections] = useState<CollectionSel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1935,7 +1971,9 @@ function CollectionsStep({ start, onDone }: { start: number; onDone: () => void 
       api.getDraft().catch(() => ({ channels: [] as { number: number }[] })),
       api.getCollections(),
     ])
-      .then(([chFile, cols]) => {
+      .then(([chFile, all]) => {
+        // With both servers set up, only the collections of the server picked in Setup.
+        const cols = bothServers ? all.filter(c => (c.server ?? 'plex') === server) : all;
         // Append collections ABOVE the current lineup so they never collide with the
         // channels just composed (plus any AI extras merged on top). apply_collections
         // keeps everything below the lowest collection number, so a base above the max
@@ -2593,7 +2631,7 @@ const blankPlanner: PlannerState = {
 export default function Run() {
   const [step, setStep] = useState(0);
   const [setup, setSetup] = useState<SetupState>({
-    mode: 'edit', method: 'build', includeCollections: false, fetchArt: false, protectedNums: [], start: 1,
+    mode: 'edit', method: 'build', includeCollections: false, fetchArt: false, protectedNums: [], start: 1, server: 'plex',
   });
   const [planner, setPlanner] = useState<PlannerState>(blankPlanner);
   const [aiExtras, setAiExtras] = useState(false);
@@ -2639,10 +2677,10 @@ export default function Run() {
           <Stepper.Step key={s.key} label={s.label} description={s.desc}>
             <Box mt="lg">
               {s.key === 'setup' && <SetupStep setup={setup} onChange={patchSetup} onDone={next} onNuke={handleNuke} />}
-              {s.key === 'export' && <ExportStep onDone={next} />}
+              {s.key === 'export' && <ExportStep onDone={next} server={setup.server} />}
               {s.key === 'planner' && <PlannerStep planner={planner} setPlanner={setPlanner} setup={setup} aiExtras={aiExtras} setAiExtras={setAiExtras} onDone={next} />}
               {s.key === 'discover' && <DiscoverStep discover curatePools={curatePools} onDone={next} />}
-              {s.key === 'collections' && <CollectionsStep start={setup.start} onDone={next} />}
+              {s.key === 'collections' && <CollectionsStep start={setup.start} onDone={next} server={setup.server} />}
               {s.key === 'deploy' && <DeployStep setup={setup} />}
             </Box>
           </Stepper.Step>

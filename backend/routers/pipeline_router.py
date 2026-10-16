@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 import channel_engine  # noqa: E402
 import jellyfin_api    # noqa: E402  (Jellyfin beta: the library picker, collections)
+import channel_tags    # noqa: E402  (one server per channel)
 import scheduler  # noqa: E402  (backend/ on sys.path) — shared deploy_lock
 
 # scheduler's import added SCRIPTS_DIR to sys.path, so the pure pipeline modules
@@ -1775,11 +1776,13 @@ async def validate(
             added += 1
         existing["channels"] = sorted(kept, key=lambda c: c.get("number", 0))
         data = existing
+        channel_tags.tag(data, _load_config())
         with open(cpath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         return {"ok": True, "count": len(data["channels"]), "added": added,
                 "skipped_dupes": skipped_dupes, "channels": data["channels"]}
 
+    channel_tags.tag(data, _load_config())
     with open(DATA_DIR / "channels.draft.json", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
@@ -1874,6 +1877,7 @@ class ComposeRequest(BaseModel):
     # Applied to every channel built in this batch (surfaced as Planner toggles):
     live: bool = False                      # mark channels auto-updating
     commercials: dict | None = None         # {filler_list_ids, filler_list_id (= first), filler_list_name(s)?, pad_minutes?}
+    server: str = ""                        # "plex" / "jellyfin": the server these channels play from
 
 
 # Which compose category (bucket) each candidate kind maps to, and its shuffle default.
@@ -2118,6 +2122,9 @@ def compose_channels(req: ComposeRequest):
             channels.append({"number": num, **ch, **extras})
 
     data = {"channels": channels, "orphaned": [], "suggested_channels": []}
+    if req.server in channel_engine.SERVERS:
+        data["server"] = req.server   # later additions to this draft (AI extras, collections) follow it
+    channel_tags.tag(data, _load_config(), req.server)
     with open(DATA_DIR / "channels.draft.json", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
@@ -2233,6 +2240,7 @@ def _reconcile_channels_json(protected_numbers: list[int]) -> None:
     else:
         out = deployed
 
+    channel_tags.tag(out, _load_config())
     with open(canon_path, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2, ensure_ascii=False)
 
@@ -2582,6 +2590,7 @@ async def run_surgical_deploy():
                         plex_url=plex_url, plex_token=plex_token,
                         plex_sections=plex_sections, collection_cache=collection_cache,
                         franchise_index=fi, id_index=ix, report=rule_report,
+                        server=channel_engine.channel_server(ch, plex_url, plex_token),
                     )
                     if rule_report.get("blocked"):
                         raise channel_engine.ChannelEngineError(
@@ -2678,6 +2687,7 @@ async def run_surgical_deploy():
                 "orphaned": [],
                 "suggested_channels": [],
             }
+            channel_tags.tag(out_data, _load_config())
             with open(canon_path, "w", encoding="utf-8") as f:
                 json.dump(out_data, f, indent=2, ensure_ascii=False)
 
@@ -2826,10 +2836,12 @@ def apply_collections(selections: list[CollectionSelection]):
             "name": s.name,
             "shuffle": "shuffle",
             "content": [{"collection": s.name, **({"server": s.server} if s.server in ("plex", "jellyfin") else {})}],
+            **({"server": s.server} if s.server in ("plex", "jellyfin") else {}),
         }
         for s in sorted(included, key=lambda x: x.channel_number)
     ]
     data["channels"] = kept + new_channels
+    channel_tags.tag(data, _load_config())
     with open(channels_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     return {"ok": True, "added": len(new_channels)}

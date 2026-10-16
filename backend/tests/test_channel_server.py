@@ -1,0 +1,191 @@
+"""test_channel_server.py — one server per channel (beta).
+
+A Tunarr with both Plex and Jellyfin holds the same movie twice. Each channel is tagged with the
+ONE server its content plays from and only that server's copies are used, so a channel never
+mixes the two. Every channel is tagged when it's made (even with one server set up), so someone
+who adds a second server later still knows where each channel came from. Channels saved before the
+tag existed are tagged by what's set up: only Plex -> Plex, only Jellyfin -> Jellyfin, both -> Plex.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+for p in (str(ROOT), str(ROOT / "backend")):
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+import channel_engine
+import channel_tags
+import jellyfin_api
+
+PLEX_CFG = {"plex_url": "http://p", "plex_token": "x"}
+JF_CFG = {"jellyfin_url": "http://jf", "jellyfin_api_key": "K"}
+
+
+# ── which server an untagged channel belongs to ───────────────────────────────────────
+
+@pytest.mark.parametrize("cfg, want", [
+    (PLEX_CFG, "plex"), (JF_CFG, "jellyfin"), ({**PLEX_CFG, **JF_CFG}, "plex"), ({}, "plex"),
+])
+def test_the_default_server(cfg, want):
+    assert channel_tags.default_for(cfg) == want
+
+
+def test_tagging_leaves_a_tagged_channel_alone():
+    data = {"channels": [{"number": 1}, {"number": 2, "server": "jellyfin"}, {"number": 3, "server": "bogus"}]}
+    assert channel_tags.tag(data, PLEX_CFG) == 2
+    assert [c["server"] for c in data["channels"]] == ["plex", "jellyfin", "plex"]
+
+
+def test_a_draft_follows_its_build_channels_choice():
+    """AI extras or collections added to a Jellyfin draft are Jellyfin channels, even with Plex set up."""
+    data = {"server": "jellyfin", "channels": [{"number": 9}]}
+    channel_tags.tag(data, {**PLEX_CFG, **JF_CFG})
+    assert data["channels"][0]["server"] == "jellyfin"
+
+
+def test_startup_tags_the_saved_files_once(tmp_path):
+    (tmp_path / "channels.json").write_text(json.dumps({"channels": [{"number": 1, "name": "A"}]}))
+    (tmp_path / "channels.draft.json").write_text(json.dumps({"channels": [{"number": 2, "server": "plex"}]}))
+    assert channel_tags.tag_files(tmp_path, JF_CFG) == 1
+    assert json.loads((tmp_path / "channels.json").read_text())["channels"][0] == {"number": 1, "name": "A", "server": "jellyfin"}
+    assert channel_tags.tag_files(tmp_path, JF_CFG) == 0   # already done
+
+
+def test_startup_tagging_survives_missing_or_broken_files(tmp_path):
+    (tmp_path / "channels.json").write_text("{ not json")
+    assert channel_tags.tag_files(tmp_path, PLEX_CFG) == 0
+
+
+def test_someone_who_adds_jellyfin_later_keeps_their_plex_channels(tmp_path):
+    """Tagged while only Plex was set up; adding Jellyfin changes nothing about them."""
+    (tmp_path / "channels.json").write_text(json.dumps({"channels": [{"number": 1}]}))
+    channel_tags.tag_files(tmp_path, PLEX_CFG)
+    channel_tags.tag_files(tmp_path, {**PLEX_CFG, **JF_CFG})
+    assert json.loads((tmp_path / "channels.json").read_text())["channels"][0]["server"] == "plex"
+
+
+def test_a_channel_saved_from_the_channels_page_is_tagged(tmp_path, monkeypatch):
+    from routers import channels_router
+    monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps(JF_CFG))
+    channels_router.save({"channels": [{"number": 5, "name": "New", "content": []}]})
+    assert json.loads((tmp_path / "channels.json").read_text())["channels"][0]["server"] == "jellyfin"
+
+
+# ── a Tunarr holding both servers' copies ─────────────────────────────────────────────
+
+def _prog(tid, title, year, source, sid, tmdb):
+    return {"id": tid, "program": {"title": title, "year": year, "state": "ok", "sourceType": source,
+                                   "mediaSourceId": sid, "identifiers": [{"type": "tmdb", "id": tmdb},
+                                                                         {"type": source, "id": f"{source}-{tid}"}]}}
+
+
+def _ep(tid, show, uuid, source, sid, tmdb):
+    return {"id": tid, "program": {"title": f"{show} S1E1", "state": "ok", "show": {
+        "uuid": uuid, "title": show, "year": 1982, "mediaSourceId": sid,
+        "identifiers": [{"type": "tmdb", "id": tmdb}, {"type": source, "id": f"{source}-{uuid}"}]}}}
+
+
+@pytest.fixture
+def both(monkeypatch):
+    """Tunarr with a Plex source and a Jellyfin source, each holding Aladdin and Cheers;
+    Jellyfin also has Antz."""
+    sources = [
+        {"name": "Plex", "type": "plex", "libraries": [
+            {"id": "pm", "mediaType": "movies", "enabled": True}, {"id": "pt", "mediaType": "shows", "enabled": True}]},
+        {"name": "Jellyfin", "type": "jellyfin", "libraries": [
+            {"id": "jm", "mediaType": "movies", "enabled": True}, {"id": "jt", "mediaType": "shows", "enabled": True}]},
+    ]
+    programs = {
+        "pm": [_prog("p-aladdin", "Aladdin", 1992, "plex", "S1", "812")],
+        "pt": [_ep("p-cheers-1", "Cheers", "p-cheers", "plex", "S1", "3918")],
+        "jm": [_prog("j-aladdin", "Aladdin", 1992, "jellyfin", "S2", "812"),
+               _prog("j-antz", "Antz", 1998, "jellyfin", "S2", "8916")],
+        "jt": [_ep("j-cheers-1", "Cheers", "j-cheers", "jellyfin", "S2", "3918")],
+    }
+    monkeypatch.setattr(channel_engine, "get_library_sources", lambda url: sources)
+    monkeypatch.setattr(channel_engine, "api", lambda url, method, path, body=None, timeout=60:
+                        next(v for k, v in programs.items() if path.endswith(f"/{k}/programs")))
+    return channel_engine.build_library_index_with_ids("http://t")
+
+
+def _played(content, both, server):
+    movie_map, show_map, idx = both
+    resolved, _ = channel_engine.resolve_content(content, movie_map, show_map, collection_cache={},
+                                                 id_index=idx, server=server)
+    # A pinned/typed entry comes back as a library item; a plain title as Tunarr's own program.
+    return [r.get("ids", {}).get("tunarr") or r.get("showId") or r["programs"][0]["id"] for r in resolved]
+
+
+@pytest.mark.parametrize("server, want", [("plex", ["p-aladdin", "p-cheers"]), ("jellyfin", ["j-aladdin", "j-cheers"])])
+def test_a_channel_plays_only_its_servers_copies(both, server, want):
+    content = [{"movie": "Aladdin", "year": 1992, "ids": {"tmdb": "812"}}, {"show": "Cheers"}]
+    assert _played(content, both, server) == want
+
+
+def test_plain_titles_follow_the_channel_too(both):
+    assert _played(["Aladdin"], both, "jellyfin") == ["j-aladdin"]
+    assert _played(["Aladdin"], both, "plex") == ["p-aladdin"]
+
+
+def test_something_only_the_other_server_has_is_not_borrowed(both):
+    assert _played(["Antz"], both, "plex") == []
+    assert _played(["Antz"], both, "jellyfin") == ["j-antz"]
+
+
+def test_a_tunarr_with_one_server_is_unaffected(monkeypatch):
+    sources = [{"name": "Jellyfin", "type": "jellyfin", "libraries": [{"id": "jm", "mediaType": "movies", "enabled": True}]}]
+    monkeypatch.setattr(channel_engine, "get_library_sources", lambda url: sources)
+    monkeypatch.setattr(channel_engine, "api", lambda *a, **k: [_prog("j-antz", "Antz", 1998, "jellyfin", "S2", "8916")])
+    movie_map, show_map, idx = channel_engine.build_library_index_with_ids("http://t")
+    # A channel tagged Plex on a Jellyfin-only Tunarr still finds what Tunarr has, not nothing.
+    resolved, _ = channel_engine.resolve_content(["Antz"], movie_map, show_map, id_index=idx, server="plex")
+    assert len(resolved) == 1
+
+
+def test_a_channels_rules_ask_its_server(both, monkeypatch):
+    """A rule with no server of its own asks the channel's server, even with Plex set up."""
+    channel_engine.set_jellyfin("http://jf", "K")
+    monkeypatch.setattr(jellyfin_api, "libraries", lambda u, k: [{"id": "L", "name": "Movies", "type": "movie"}])
+    monkeypatch.setattr(jellyfin_api, "items", lambda *a, **k: [
+        {"Id": "x", "Name": "Antz", "Type": "Movie", "ProductionYear": 1998, "Genres": ["Animation"],
+         "ProviderIds": {"Tmdb": "8916"}}])
+    monkeypatch.setattr(channel_engine, "_plex_listing", lambda *a: pytest.fail("Plex was asked"))
+    movie_map, show_map, idx = both
+    resolved, _ = channel_engine.resolve_content([{"rule": "genre", "value": "Animation"}], movie_map, show_map,
+                                                 plex_url="http://p", plex_token="x", collection_cache={},
+                                                 id_index=idx, server="jellyfin")
+    assert [r["ids"]["tunarr"] for r in resolved] == ["j-antz"]
+
+
+def test_the_channels_server(monkeypatch):
+    assert channel_engine.channel_server({"server": "jellyfin"}, "http://p", "x") == "jellyfin"
+    assert channel_engine.channel_server({}, "http://p", "x") == "plex"
+    channel_engine.set_jellyfin("http://jf", "K")
+    assert channel_engine.channel_server({}, "", "") == "jellyfin"
+
+
+def test_a_one_server_view_never_hands_back_someone_elses_maps(monkeypatch):
+    """The Add box's lookup asks with empty maps; a channel check on the same shared library
+    must still get the real ones."""
+    sources = [{"name": "Jellyfin", "type": "jellyfin", "libraries": [{"id": "jm", "mediaType": "movies", "enabled": True}]}]
+    monkeypatch.setattr(channel_engine, "get_library_sources", lambda url: sources)
+    monkeypatch.setattr(channel_engine, "api", lambda *a, **k: [_prog("j-antz", "Antz", 1998, "jellyfin", "S2", "8916")])
+    movie_map, show_map, idx = channel_engine.build_library_index_with_ids("http://t")
+    channel_engine.library_for_server({}, {}, idx, "jellyfin")
+    assert channel_engine.library_for_server(movie_map, show_map, idx, "jellyfin")[0] is movie_map
+
+
+def test_the_add_box_lookup_only_offers_the_channels_servers_copies(both, monkeypatch, tmp_path):
+    import asyncio
+    from routers import channels_router
+    monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://t"}))
+    monkeypatch.setattr(channels_router, "_cached_library", lambda url, refresh=False: both)
+    got = asyncio.run(channels_router.library_lookup("Aladdin", server="jellyfin"))
+    assert [m["entry"]["ids"]["tunarr"] for m in got["matches"]] == ["j-aladdin"]

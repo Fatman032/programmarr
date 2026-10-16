@@ -50,13 +50,13 @@ export const api = {
     }),
   getLibraryTitles: () => req<string[]>('/library/titles'),
   // Every movie/show with exactly this title, each with a ready-to-save entry.
-  lookupLibrary: (title: string, kind?: 'movie' | 'show') =>
+  lookupLibrary: (title: string, kind?: 'movie' | 'show', server?: 'plex' | 'jellyfin') =>
     req<{ matches: LibraryMatch[] }>(
-      `/library/lookup?title=${encodeURIComponent(title)}${kind ? `&kind=${kind}` : ''}`),
+      `/library/lookup?title=${encodeURIComponent(title)}${kind ? `&kind=${kind}` : ''}${server ? `&server=${server}` : ''}`),
 
   // What a live rule can be set to (genres, studios, directors, actors, decades as Plex has them, with counts).
-  getRuleValues: (rule: string, kind: 'movie' | 'show') =>
-    req<{ values: RuleValue[] }>(`/library/rule-values?rule=${encodeURIComponent(rule)}&kind=${kind}`),
+  getRuleValues: (rule: string, kind: 'movie' | 'show', server?: 'plex' | 'jellyfin') =>
+    req<{ values: RuleValue[] }>(`/library/rule-values?rule=${encodeURIComponent(rule)}&kind=${kind}${server ? `&server=${server}` : ''}`),
 
   getCsvInfo: () => req<CsvInfo>('/pipeline/csv/info'),
   getFacets: (minItems = 5) => req<LibraryFacets>(`/pipeline/facets?min_items=${minItems}`),
@@ -96,11 +96,11 @@ export const api = {
   composeChannels: (
     specs: CandidateSpec[],
     start: number,
-    opts?: { live?: boolean; commercials?: Commercials },
+    opts?: { live?: boolean; commercials?: Commercials; server?: 'plex' | 'jellyfin' },
   ) =>
     req<ComposeResult>('/pipeline/compose', {
       method: 'POST',
-      body: JSON.stringify({ specs, start, live: opts?.live, commercials: opts?.commercials }),
+      body: JSON.stringify({ specs, start, live: opts?.live, commercials: opts?.commercials, server: opts?.server }),
     }),
   validateText: async (content: string, append = false) => {
     const form = new FormData();
@@ -283,6 +283,8 @@ export interface Channel {
   commercials?: Commercials;
   icon?: ChannelIcon;
   playback?: PlaybackSetting;
+  /** The ONE server this channel's content plays from (beta). Set when the channel is made. */
+  server?: 'plex' | 'jellyfin';
 }
 
 // ── Live channels (recipes) ──

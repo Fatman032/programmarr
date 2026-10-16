@@ -240,9 +240,11 @@ function ChannelModal({
   const [looking, setLooking] = useState(false);
   // The Add box: a kind (blank = plain title), movies or TV shows for a rule, and the value.
   const [addType, setAddType] = useState<string | null>(null);
-  // Live rules ask Plex when it's set up, else Jellyfin (beta) — the same choice the engine makes.
-  const { hasPlex } = useMediaServers();
-  const ruleServer = hasPlex ? 'Plex' : 'Jellyfin';
+  // Each channel plays from ONE server (beta): its rules, collections and titles all come from it.
+  const { hasPlex, hasJellyfin } = useMediaServers();
+  const chServer: 'plex' | 'jellyfin' = channel?.server ?? (hasPlex ? 'plex' : 'jellyfin');
+  const ruleServer = chServer === 'plex' ? 'Plex' : 'Jellyfin';
+  const showServer = hasPlex && hasJellyfin;   // only worth showing with both set up
   const [addKind, setAddKind] = useState<'movie' | 'show'>('movie');
   // What the server has for the chosen rule (a pick-list). null = not loaded or unreachable -> type it instead.
   const [ruleChoices, setRuleChoices] = useState<RuleValue[] | null>(null);
@@ -345,11 +347,11 @@ function ChannelModal({
     setChoicesFailed(false);
     if (!opened || !addType || !RULE_TYPES.includes(addType)) return;
     let alive = true;
-    api.getRuleValues(addType, addKind)
+    api.getRuleValues(addType, addKind, chServer)
       .then((r) => { if (alive) setRuleChoices(r.values); })
       .catch(() => { if (alive) setChoicesFailed(true); });
     return () => { alive = false; };
-  }, [addType, addKind, opened]);
+  }, [addType, addKind, opened, chServer]);
 
   // What the Add box holds, as the entry text addItem understands.
   function entryText(): string {
@@ -382,7 +384,7 @@ function ChannelModal({
     const title = typed ? typed[2].trim() : text;
     setLooking(true);
     try {
-      const { matches } = await api.lookupLibrary(title, kind);
+      const { matches } = await api.lookupLibrary(title, kind, chServer);
       if (matches.length === 1) return pushRow(rowFromEntry(matches[0].entry));
       if (matches.length > 1) return setChoices({ text, matches });
       notifications.show({ color: 'yellow', message: `"${title}" isn't in your Tunarr library — added as typed.` });
@@ -426,7 +428,7 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
       });
     }
     franchiseRefs.forEach((ref) => rawContent.push(ref));
-    const payload: any = { number: Number(number), name, shuffle, content: rawContent };
+    const payload: any = { number: Number(number), name, shuffle, content: rawContent, server: chServer };
     if (live) payload.live = true;
     const commercials = commEnabled ? buildCommercials(commListIds, fillerLists, Number(commPad)) : undefined;
     if (commercials) payload.commercials = commercials;
@@ -498,7 +500,8 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
     <Modal
       opened={opened}
       onClose={onClose}
-      title={<Text fw={700}>Edit Channel #{channel?.number}</Text>}
+      title={<Group gap="xs"><Text fw={700}>Edit Channel #{channel?.number}</Text>
+        {showServer && <Badge size="sm" variant="light" color={chServer === 'plex' ? 'yellow' : 'grape'}>{ruleServer} channel</Badge>}</Group>}
       size="lg"
     >
       <Stack gap="sm">
@@ -851,12 +854,15 @@ function ChannelRow({
   channel,
   sync,
   notice,
+  server,
   onEdit,
   onDelete,
 }: {
   channel: TunarrChannel;
   sync?: ChannelSyncState;
   notice?: ChannelNotice | ChannelReview;
+  /** Shown only when both Plex and Jellyfin are set up. */
+  server?: 'plex' | 'jellyfin';
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -888,7 +894,11 @@ function ChannelRow({
         </Badge>
 
         <Box style={{ flex: 1, minWidth: 0 }}>
-          <Text size="sm" fw={600} truncate>{channel.name}</Text>
+          <Group gap={6} wrap="nowrap">
+            <Text size="sm" fw={600} truncate>{channel.name}</Text>
+            {server && <Badge size="xs" variant="light" color={server === 'plex' ? 'yellow' : 'grape'} style={{ flexShrink: 0 }}>
+              {server === 'plex' ? 'Plex' : 'Jellyfin'}</Badge>}
+          </Group>
           {sync?.checked_at && (
             <Group gap={4} mt={2}>
               <Badge size="xs" color="orange" variant="light" leftSection={<IconRepeat size={10} />}>
@@ -981,6 +991,9 @@ export default function Channels() {
   const nav = useNavigate();
   const [channels, setChannels] = useState<TunarrChannel[]>([]);
   const [managed, setManaged] = useState<Set<number>>(new Set());
+  // Which server each channel plays from (beta) — badged only when both servers are set up.
+  const [serverOf, setServerOf] = useState<Record<number, 'plex' | 'jellyfin'>>({});
+  const servers = useMediaServers();
   const [sync, setSync] = useState<Record<string, ChannelSyncState>>({});
   const [notices, setNotices] = useState<Record<string, ChannelNotice>>({});
   // A live check of every channel: what the saved notices know is only what the last Apply or
@@ -997,6 +1010,7 @@ export default function Channels() {
     ]);
     setChannels([...tunarr].sort((a, b) => a.number - b.number));
     setManaged(new Set(local.channels.map((c) => c.number)));
+    setServerOf(Object.fromEntries(local.channels.filter((c) => c.server).map((c) => [c.number, c.server!])));
     setLoading(false);
     api.getRecipesStatus().then((s) => setSync(s.channels || {})).catch(() => {});
     api.getChannelNotices().then(setNotices).catch(() => {});
@@ -1069,6 +1083,7 @@ export default function Channels() {
                 channel={ch}
                 sync={sync[String(ch.number)]}
                 notice={reviews[String(ch.number)] ?? notices[String(ch.number)]}
+                server={servers.hasPlex && servers.hasJellyfin ? serverOf[ch.number] : undefined}
                 onEdit={() => edit(ch)}
                 onDelete={() => load()}
               />

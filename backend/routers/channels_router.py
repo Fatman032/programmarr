@@ -15,6 +15,7 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 import channel_engine  # noqa: E402
+import channel_tags    # noqa: E402
 import notices         # noqa: E402
 import scheduler       # noqa: E402  (shared deploy_lock)
 import badge_renderer  # noqa: E402
@@ -50,6 +51,7 @@ def load() -> dict:
 
 
 def save(data: dict):
+    channel_tags.tag(data, _load_config())   # a new channel remembers its server
     with open(_path(), "w") as f:
         json.dump(data, f, indent=2)
 
@@ -84,6 +86,9 @@ def update_channel(number: int, channel: dict):
     data = load()
     for i, ch in enumerate(data.get("channels", [])):
         if ch.get("number") == number:
+            # A channel keeps the server it was made for — an edit that doesn't say never resets it.
+            if channel.get("server") not in channel_engine.SERVERS and ch.get("server") in channel_engine.SERVERS:
+                channel["server"] = ch["server"]
             data["channels"][i] = channel
             save(data)
             return {"ok": True}
@@ -133,6 +138,7 @@ async def apply_channel(number: int):
             plex_sections=plex_sections, collection_cache=collection_cache,
             franchise_index=channel_engine.load_franchise_index(DATA_DIR),
             id_index=id_index, report=report,
+            server=channel_engine.channel_server(ch, plex_url, plex_token),
         )
         # Say what was skipped (or found again) instead of letting it vanish — recorded
         # before anything below can fail, so even a channel that resolves to nothing
@@ -283,7 +289,7 @@ _values_lock = threading.Lock()
 
 
 @router.get("/library/rule-values")
-async def library_rule_values(rule: str, kind: str = "movie", refresh: bool = False):
+async def library_rule_values(rule: str, kind: str = "movie", refresh: bool = False, server: str = ""):
     """The choices for a live rule's pick-list — {"values": [{value, label, count}], "server"}:
     the genres / studios / directors / actors on the server the rule asks — Plex when set up,
     else Jellyfin (beta) — as that server spells them, with how many items have each, or the
@@ -296,7 +302,7 @@ async def library_rule_values(rule: str, kind: str = "movie", refresh: bool = Fa
     cfg = _load_config()
     channel_engine.set_tunarr_auth_from_config(cfg)   # also remembers the Jellyfin connection
     plex_url, plex_token = cfg.get("plex_url", "").rstrip("/"), cfg.get("plex_token", "")
-    server = channel_engine.rule_server({}, plex_url, plex_token)
+    server = channel_engine.rule_server({"server": server} if server else {}, plex_url, plex_token)
     if server is None:
         raise HTTPException(502, "No Plex or Jellyfin server is set up")
     name = "Plex" if server == "plex" else "Jellyfin"
@@ -305,7 +311,7 @@ async def library_rule_values(rule: str, kind: str = "movie", refresh: bool = Fa
         with _values_lock:
             if refresh or time.monotonic() - _values_cache["at"] > _VALUES_TTL_SECONDS:
                 _values_cache.update(at=time.monotonic(), plex={})
-            return channel_engine.rule_values(rule, kind, plex_url, plex_token, [], _values_cache["plex"])
+            return channel_engine.rule_values(rule, kind, plex_url, plex_token, [], _values_cache["plex"], server=server)
 
     values = await asyncio.to_thread(_do)
     if values is None:
@@ -316,10 +322,11 @@ async def library_rule_values(rule: str, kind: str = "movie", refresh: bool = Fa
 
 
 @router.get("/library/lookup")
-async def library_lookup(title: str, kind: str = "", refresh: bool = False):
+async def library_lookup(title: str, kind: str = "", refresh: bool = False, server: str = ""):
     """Every movie/show in the library with exactly this title, each with a ready-to-save
     channel entry that carries its own numbers ({"movie": .., "year": .., "ids": {..}}).
-    One match: the Add box pins it. Several: it asks. None: it adds the text as typed."""
+    One match: the Add box pins it. Several: it asks. None: it adds the text as typed.
+    With `server` ("plex" / "jellyfin"), only the copies Tunarr plays from that server."""
     if kind not in ("", "movie", "show"):
         raise HTTPException(400, "kind must be 'movie' or 'show'")
     cfg = _load_config()
@@ -331,6 +338,8 @@ async def library_lookup(title: str, kind: str = "", refresh: bool = False):
         _, _, index = await asyncio.to_thread(_cached_library, tunarr_url, refresh)
     except channel_engine.ChannelEngineError as e:
         raise HTTPException(502, str(e))
+    if server in channel_engine.SERVERS:
+        _, _, index = channel_engine.library_for_server({}, {}, index, server)
     matches = []
     for item in channel_engine.find_by_title(title, index, kind or None):
         k = "movie" if item["type"] == "Movie" else "show"
@@ -371,7 +380,8 @@ def _review_channels(channels, tunarr_url, plex_url, plex_token, refresh=False, 
             channel_engine.resolve_content(
                 ch.get("content", []), movie_map, show_map, plex_url=plex_url, plex_token=plex_token,
                 plex_sections=plex_sections, collection_cache=collection_cache,
-                franchise_index=franchise_index, id_index=id_index, report=report)
+                franchise_index=franchise_index, id_index=id_index, report=report,
+                server=channel_engine.channel_server(ch, plex_url, plex_token))
         except Exception:
             if not isolate:
                 raise

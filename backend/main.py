@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import channel_tags
 import scheduler
 from routers import channels_router, config_router, logs_router, pipeline_router, recipes_router, status_router
 
@@ -29,6 +30,18 @@ STATIC_DIR = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     # Ensure data directories exist before serving any requests
     (DATA_DIR / "logs").mkdir(parents=True, exist_ok=True)
+    # Every channel remembers which server (Plex / Jellyfin) its content plays from; channels
+    # saved before that existed are tagged once here. Never stops the app from starting.
+    try:
+        cfg = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
+    except Exception:
+        cfg = {}
+    try:
+        tagged = channel_tags.tag_files(DATA_DIR, cfg)
+        if tagged:
+            print(f"Tagged {tagged} channel(s) with their server ({channel_tags.default_for(cfg)})")
+    except Exception as e:
+        print(f"WARNING: could not tag channels with their server: {e}")
     # Start the live-channel scheduler loop (no-op unless recipes_enabled in config)
     scheduler_task = asyncio.create_task(scheduler.scheduler_loop())
     try:
