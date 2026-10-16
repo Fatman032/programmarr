@@ -50,7 +50,7 @@ JF_SHOWS = [{"Id": "j-cheers", "Name": "Cheers", "Type": "Series", "ProductionYe
 def jellyfin(monkeypatch):
     """Fake Jellyfin with a movie and a show library. `jellyfin.calls` counts listings;
     `jellyfin.down = True` makes it unreadable."""
-    state = type("JF", (), {"calls": [], "down": False})()
+    state = type("JF", (), {"calls": [], "fields": [], "down": False})()
     channel_engine.set_jellyfin("http://jf:8096", "K")
 
     def libraries(url, key):
@@ -59,6 +59,7 @@ def jellyfin(monkeypatch):
 
     def items(url, key, parent_id, item_type, fields=None):
         state.calls.append((parent_id, item_type))
+        state.fields.append(fields)
         return None if state.down else (JF_MOVIES if item_type == "Movie" else JF_SHOWS)
     monkeypatch.setattr(jellyfin_api, "libraries", libraries)
     monkeypatch.setattr(jellyfin_api, "items", items)
@@ -196,3 +197,33 @@ def test_the_choices_endpoint_with_no_server(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as e:
         asyncio.run(channels_router.library_rule_values("genre", "movie"))
     assert e.value.status_code == 502
+
+
+# ── cast and crew only when a rule needs them ─────────────────────────────────────────
+
+def test_a_genre_rule_doesnt_ask_for_cast_and_crew(jellyfin, library):
+    """Asking Jellyfin for People made saving a {genre: Comedy} channel take about a minute
+    (54 s for 1,630 movies, against half a second without)."""
+    _resolve([{"rule": "genre", "value": "Animation"}], library)
+    assert "People" not in jellyfin.fields[0]
+
+
+def test_actor_and_director_rules_do(jellyfin, library):
+    for rule, value in (("actor", "Dan Aykroyd"), ("director", "Michael Mann")):
+        jellyfin.fields.clear()
+        _resolve([{"rule": rule, "value": value}], library)
+        assert "People" in jellyfin.fields[0]
+
+
+def test_one_listing_with_people_serves_every_rule(jellyfin, library):
+    movie_map, show_map, idx = library
+    cache = {}
+    for entry in ({"rule": "actor", "value": "Dan Aykroyd"}, {"rule": "genre", "value": "Crime"},
+                  {"rule": "studio", "value": "Warner Bros."}):
+        channel_engine.resolve_content([entry], movie_map, show_map, collection_cache=cache, id_index=idx)
+    assert jellyfin.calls == [("mv", "Movie")]
+
+
+def test_the_genre_pick_list_doesnt_ask_for_cast_and_crew(jellyfin):
+    channel_engine.rule_values("genre", "movie", "", "", [], {})
+    assert "People" not in jellyfin.fields[0]

@@ -999,11 +999,22 @@ def _plex_listing(plex_url, token, kind, sections, cache):
     return cache[ck]
 
 
-def _jellyfin_listing(kind, cache):
+# Jellyfin answers a list of every movie in well under a second — but asking for each item's
+# cast and crew (People) makes the same list take nearly a minute for ~1,600 movies. So People is
+# only asked for when a rule needs it (actor / director).
+_JF_LISTING_FIELDS = "Genres,Studios,ProviderIds"
+_PEOPLE_RULES = ("actor", "director")
+
+
+def _jellyfin_listing(kind, cache, people=False):
     """Every movie or show Jellyfin has (BETA), in the same shape as _plex_listing and with the
-    same cut (top-billed actors only), fetched once per cycle (cached). None when Jellyfin isn't
-    set up or could not be read — "don't know", never "nothing matches"."""
-    ck = ("jellyfin-listing", kind)
+    same cut (top-billed actors only), fetched once per cycle (cached). Cast and crew are only
+    read with `people` (a listing read with them serves the other rules too). None when Jellyfin
+    isn't set up or could not be read — "don't know", never "nothing matches"."""
+    full = ("jellyfin-listing", kind, True)
+    if full in cache:
+        return cache[full]
+    ck = ("jellyfin-listing", kind, bool(people))
     if ck in cache:
         return cache[ck]
     if _JELLYFIN is None:
@@ -1014,7 +1025,8 @@ def _jellyfin_listing(kind, cache):
     for lib in libs or []:
         if lib["type"] != kind:
             continue
-        found = jellyfin_api.items(url, api_key, lib["id"], "Movie" if kind == "movie" else "Series")
+        found = jellyfin_api.items(url, api_key, lib["id"], "Movie" if kind == "movie" else "Series",
+                                   fields=_JF_LISTING_FIELDS + (",People" if people else ""))
         if found is None:
             ok = False
             continue
@@ -1057,11 +1069,11 @@ def rule_server(entry, plex_url, token):
 _SERVER_NAMES = {"plex": "Plex", "jellyfin": "Jellyfin"}
 
 
-def _rule_listing(server, kind, plex_url, token, sections, cache):
+def _rule_listing(server, kind, plex_url, token, sections, cache, rule=None):
     if server == "plex":
         return _plex_listing(plex_url, token, kind, sections, cache)
     if server == "jellyfin":
-        return _jellyfin_listing(kind, cache)
+        return _jellyfin_listing(kind, cache, people=rule in _PEOPLE_RULES)
     return None
 
 
@@ -1089,7 +1101,7 @@ def resolve_rule_members(entry, plex_url, token, sections, cache):
     title + year. None when the server could not be read."""
     kind = "show" if entry.get("kind") == "show" else "movie"
     server = rule_server(entry, plex_url, token)
-    listing = _rule_listing(server, kind, plex_url, token, sections, cache)
+    listing = _rule_listing(server, kind, plex_url, token, sections, cache, rule=entry.get("rule"))
     if listing is None:
         return None
     label = _rule_label(entry)
@@ -1106,7 +1118,7 @@ def rule_values(rule, kind, plex_url, token, sections, cache, server=None):
     if rule not in RULE_KINDS:
         return []
     server = rule_server({"server": server}, plex_url, token)
-    listing = _rule_listing(server, "show" if kind == "show" else "movie", plex_url, token, sections, cache)
+    listing = _rule_listing(server, "show" if kind == "show" else "movie", plex_url, token, sections, cache, rule=rule)
     if listing is None:
         return None
     counts = {}   # lowercased -> [as the server spells it, count]
