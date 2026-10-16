@@ -315,3 +315,32 @@ def test_the_export_asks_jellyfin_not_to_fold_collections(monkeypatch):
     got = jellyfin_api.items("http://jf", "K", "lib", "Movie")
     assert "CollapseBoxSetItems=false" in seen[0]
     assert [i["Name"] for i in got] == ["Antz"]
+
+
+def test_a_listing_with_cast_and_crew_is_read_in_pages(monkeypatch):
+    """Cast and crew for every movie in one answer took ~54 s; it's read in pages, a few at once."""
+    seen = []
+    def fake(url, key, path, timeout=120):
+        seen.append(path)
+        start = int(path.split("StartIndex=")[1].split("&")[0])
+        return {"TotalRecordCount": 250, "Items": [{"Name": f"m{start + i}", "Type": "Movie"}
+                                                   for i in range(min(100, 250 - start))]}
+    monkeypatch.setattr(jellyfin_api, "get", fake)
+    got = jellyfin_api.items("http://jf", "K", "lib", "Movie", fields="Genres,People")
+    assert len(got) == 250 and len({g["Name"] for g in got}) == 250
+    assert sorted(int(p.split("StartIndex=")[1].split("&")[0]) for p in seen) == [0, 100, 200]
+    assert all("Limit=100" in p for p in seen)
+
+
+def test_a_failed_page_means_unreadable(monkeypatch):
+    def fake(url, key, path, timeout=120):
+        return None if "StartIndex=100" in path else {"TotalRecordCount": 150, "Items": [{"Name": "a", "Type": "Movie"}]}
+    monkeypatch.setattr(jellyfin_api, "get", fake)
+    assert jellyfin_api.items("http://jf", "K", "lib", "Movie", fields="People") is None
+
+
+def test_a_persons_exact_spelling_is_looked_up(monkeypatch):
+    monkeypatch.setattr(jellyfin_api, "get", lambda url, key, path, timeout=120: {"Items": [
+        {"Name": "Colin Hanks"}, {"Name": "Tom Hanks"}]})
+    assert jellyfin_api.person_name("http://jf", "K", "tom hanks") == "Tom Hanks"
+    assert jellyfin_api.person_name("http://jf", "K", "Nobody") == "Nobody"

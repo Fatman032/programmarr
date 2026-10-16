@@ -50,7 +50,7 @@ JF_SHOWS = [{"Id": "j-cheers", "Name": "Cheers", "Type": "Series", "ProductionYe
 def jellyfin(monkeypatch):
     """Fake Jellyfin with a movie and a show library. `jellyfin.calls` counts listings;
     `jellyfin.down = True` makes it unreadable."""
-    state = type("JF", (), {"calls": [], "fields": [], "down": False})()
+    state = type("JF", (), {"calls": [], "fields": [], "person_calls": [], "down": False})()
     channel_engine.set_jellyfin("http://jf:8096", "K")
 
     def libraries(url, key):
@@ -61,8 +61,22 @@ def jellyfin(monkeypatch):
         state.calls.append((parent_id, item_type))
         state.fields.append(fields)
         return None if state.down else (JF_MOVIES if item_type == "Movie" else JF_SHOWS)
+    def person_name(url, key, name):
+        if state.down:
+            return None
+        names = {p["Name"] for m in JF_MOVIES + JF_SHOWS for p in m["People"]}
+        return next((n for n in names if n.lower() == name.strip().lower()), name)
+
+    def person_items(url, key, parent_id, item_type, name, role, fields=None):
+        """Jellyfin's person filter: exact spelling, credited in that role."""
+        state.person_calls.append((parent_id, item_type, name, role))
+        pool = JF_MOVIES if item_type == "Movie" else JF_SHOWS
+        return [m for m in pool if any(p["Name"] == name and p["Type"] == role for p in m["People"])]
+
     monkeypatch.setattr(jellyfin_api, "libraries", libraries)
     monkeypatch.setattr(jellyfin_api, "items", items)
+    monkeypatch.setattr(jellyfin_api, "person_name", person_name)
+    monkeypatch.setattr(jellyfin_api, "person_items", person_items)
     return state
 
 
@@ -208,20 +222,33 @@ def test_a_genre_rule_doesnt_ask_for_cast_and_crew(jellyfin, library):
     assert "People" not in jellyfin.fields[0]
 
 
-def test_actor_and_director_rules_do(jellyfin, library):
-    for rule, value in (("actor", "Dan Aykroyd"), ("director", "Michael Mann")):
-        jellyfin.fields.clear()
-        _resolve([{"rule": rule, "value": value}], library)
-        assert "People" in jellyfin.fields[0]
+def test_actor_and_director_rules_ask_for_that_one_person(jellyfin, library):
+    """Everyone's cast took ~24 s per save; one person's items take well under a second."""
+    assert _resolve([{"rule": "actor", "value": "dan aykroyd"}], library)[0] == ["t-antz"]
+    assert _resolve([{"rule": "director", "value": "MICHAEL MANN"}], library)[0] == ["t-heat"]
+    assert jellyfin.calls == []   # no full listing at all
+    assert jellyfin.person_calls == [("mv", "Movie", "Dan Aykroyd", "Actor"), ("mv", "Movie", "Michael Mann", "Director")]
 
 
-def test_one_listing_with_people_serves_every_rule(jellyfin, library):
-    movie_map, show_map, idx = library
-    cache = {}
-    for entry in ({"rule": "actor", "value": "Dan Aykroyd"}, {"rule": "genre", "value": "Crime"},
-                  {"rule": "studio", "value": "Warner Bros."}):
-        channel_engine.resolve_content([entry], movie_map, show_map, collection_cache=cache, id_index=idx)
-    assert jellyfin.calls == [("mv", "Movie")]
+def test_an_actor_rule_still_counts_only_the_top_billed(jellyfin, library):
+    """Jellyfin's person filter finds any credit; the rule keeps the same top-3 cut as Plex."""
+    assert _resolve([{"rule": "actor", "value": "Jennifer Lopez"}], library)[0] == []
+
+
+def test_an_unknown_person_matches_nothing(jellyfin, library):
+    ids, report = _resolve([{"rule": "actor", "value": "Nobody At All"}], library)
+    assert ids == [] and report["missing"][0]["why"] == "matched nothing in Jellyfin"
+
+
+def test_unreadable_jellyfin_blocks_a_person_rule(jellyfin, library):
+    jellyfin.down = True
+    _, report = _resolve([{"rule": "actor", "value": "Dan Aykroyd"}], library)
+    assert report["blocked"] and "Jellyfin could not be read" in report["blocked"][0]
+
+
+def test_the_actor_pick_list_still_reads_everyones_cast(jellyfin):
+    values = channel_engine.rule_values("actor", "movie", "", "", [], {})
+    assert "People" in jellyfin.fields[0] and {"value": "Woody Allen", "label": "Woody Allen", "count": 1} in values
 
 
 def test_the_genre_pick_list_doesnt_ask_for_cast_and_crew(jellyfin):

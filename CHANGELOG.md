@@ -61,6 +61,11 @@ All notable changes to Programmarr are documented here. This project follows
   matches now carry their TMDB/IMDB numbers too. Something Jellyfin has but Tunarr hasn't scanned yet
   is reported, and if Jellyfin can't be read the rule isn't checked and the channel is left alone.
   Jellyfin tags genres its own way, so the same rule can find a different number of titles than on Plex.
+  Jellyfin is slow to hand over every movie's cast and crew (~1 minute for ~1,600 movies), so rules
+  never ask for it: an actor / director rule asks Jellyfin for that one person's movies (about a
+  second, any capitalisation), other rules skip cast and crew. Only the Actor / Director pick-list
+  needs everyone's cast; it's read in parallel pages (~25 s, then kept 5 minutes) and the box says so
+  while it loads.
 - **A Jellyfin collection no longer hides its movies from Export/Scan.** Jellyfin lists a collection in
   place of its members unless asked not to, so once a "Fish" collection existed the export lost its
   10 movies and reported "Fish" as a movie not in Tunarr. It now asks for every movie and show

@@ -1001,9 +1001,65 @@ def _plex_listing(plex_url, token, kind, sections, cache):
 
 # Jellyfin answers a list of every movie in well under a second — but asking for each item's
 # cast and crew (People) makes the same list take nearly a minute for ~1,600 movies. So People is
-# only asked for when a rule needs it (actor / director).
+# only asked for when it's needed: an actor / director RULE asks Jellyfin for that one person's
+# items (under a second); only the actor / director PICK-LIST reads everyone's cast.
 _JF_LISTING_FIELDS = "Genres,Studios,ProviderIds"
 _PEOPLE_RULES = ("actor", "director")
+_JF_ROLES = {"actor": "Actor", "director": "Director"}
+
+
+def _jf_libraries(cache):
+    if ("jellyfin-libraries",) not in cache:
+        url, api_key = _JELLYFIN
+        cache[("jellyfin-libraries",)] = jellyfin_api.libraries(url, api_key)
+    return cache[("jellyfin-libraries",)]
+
+
+def _jf_listing_item(it, kind):
+    """One Jellyfin movie / show in the shape _plex_listing gives (top-billed actors only)."""
+    people = [p for p in it.get("People") or [] if isinstance(p, dict) and (p.get("Name") or "").strip()]
+    raw = {
+        "genre": [g.strip() for g in it.get("Genres") or [] if isinstance(g, str) and g.strip()],
+        "director": [p["Name"].strip() for p in people if p.get("Type") == "Director"],
+        "studio": [s["Name"].strip() for s in it.get("Studios") or []
+                   if isinstance(s, dict) and (s.get("Name") or "").strip()],
+        "actor": [p["Name"].strip() for p in people if p.get("Type") == "Actor"][:RULE_LEAD_CAST],
+    }
+    providers = {k.lower(): str(v) for k, v in (it.get("ProviderIds") or {}).items() if v}
+    ids = {"tmdb": providers.get("tmdb"), "imdb": providers.get("imdb"), "jellyfin": it.get("Id")}
+    return {
+        "title": it["Name"], "kind": kind, "year": it.get("ProductionYear"), "plex_id": None,
+        "ids": {k: v for k, v in ids.items() if v},
+        "raw": raw,   # as Jellyfin spells them: what a pick-list shows
+        "genres": [v.lower() for v in raw["genre"]],
+        "directors": [v.lower() for v in raw["director"]],
+        "studios": [v.lower() for v in raw["studio"]],
+        "actors": [v.lower() for v in raw["actor"]],
+    }
+
+
+def _jellyfin_person_listing(kind, rule, value, cache):
+    """The Jellyfin movies / shows one person is credited on for an actor / director rule (BETA),
+    in listing shape — asked of Jellyfin directly, in well under a second. The rule's own match
+    (top-billed actors only, any case) is applied afterwards as usual. None if unreadable."""
+    ck = ("jellyfin-person", kind, rule, str(value).strip().lower())
+    if ck in cache:
+        return cache[ck]
+    url, api_key = _JELLYFIN
+    libs = _jf_libraries(cache)
+    name = jellyfin_api.person_name(url, api_key, str(value).strip()) if libs is not None else None
+    listing, ok = [], libs is not None and name is not None
+    for lib in libs or [] if ok else []:
+        if lib["type"] != kind:
+            continue
+        found = jellyfin_api.person_items(url, api_key, lib["id"], "Movie" if kind == "movie" else "Series",
+                                          name, _JF_ROLES[rule], fields=_JF_LISTING_FIELDS + ",People")
+        if found is None:
+            ok = False
+            continue
+        listing += [_jf_listing_item(it, kind) for it in found if it.get("Name")]
+    cache[ck] = listing if ok else None
+    return cache[ck]
 
 
 def _jellyfin_listing(kind, cache, people=False):
@@ -1020,7 +1076,7 @@ def _jellyfin_listing(kind, cache, people=False):
     if _JELLYFIN is None:
         return None
     url, api_key = _JELLYFIN
-    libs = jellyfin_api.libraries(url, api_key)
+    libs = _jf_libraries(cache)
     listing, ok = [], libs is not None
     for lib in libs or []:
         if lib["type"] != kind:
@@ -1030,28 +1086,7 @@ def _jellyfin_listing(kind, cache, people=False):
         if found is None:
             ok = False
             continue
-        for it in found:
-            if not it.get("Name"):
-                continue
-            people = [p for p in it.get("People") or [] if isinstance(p, dict) and (p.get("Name") or "").strip()]
-            raw = {
-                "genre": [g.strip() for g in it.get("Genres") or [] if isinstance(g, str) and g.strip()],
-                "director": [p["Name"].strip() for p in people if p.get("Type") == "Director"],
-                "studio": [s["Name"].strip() for s in it.get("Studios") or []
-                           if isinstance(s, dict) and (s.get("Name") or "").strip()],
-                "actor": [p["Name"].strip() for p in people if p.get("Type") == "Actor"][:RULE_LEAD_CAST],
-            }
-            providers = {k.lower(): str(v) for k, v in (it.get("ProviderIds") or {}).items() if v}
-            ids = {"tmdb": providers.get("tmdb"), "imdb": providers.get("imdb"), "jellyfin": it.get("Id")}
-            listing.append({
-                "title": it["Name"], "kind": kind, "year": it.get("ProductionYear"), "plex_id": None,
-                "ids": {k: v for k, v in ids.items() if v},
-                "raw": raw,   # as Jellyfin spells them: what a pick-list shows
-                "genres": [v.lower() for v in raw["genre"]],
-                "directors": [v.lower() for v in raw["director"]],
-                "studios": [v.lower() for v in raw["studio"]],
-                "actors": [v.lower() for v in raw["actor"]],
-            })
+        listing += [_jf_listing_item(it, kind) for it in found if it.get("Name")]
     cache[ck] = listing if ok else None
     return cache[ck]
 
@@ -1101,7 +1136,12 @@ def resolve_rule_members(entry, plex_url, token, sections, cache):
     title + year. None when the server could not be read."""
     kind = "show" if entry.get("kind") == "show" else "movie"
     server = rule_server(entry, plex_url, token)
-    listing = _rule_listing(server, kind, plex_url, token, sections, cache, rule=entry.get("rule"))
+    if (server == "jellyfin" and entry.get("rule") in _PEOPLE_RULES
+            and ("jellyfin-listing", kind, True) not in cache):
+        # One person's items, not everyone's cast (unless a full listing is already at hand).
+        listing = _jellyfin_person_listing(kind, entry["rule"], entry.get("value", ""), cache)
+    else:
+        listing = _rule_listing(server, kind, plex_url, token, sections, cache, rule=entry.get("rule"))
     if listing is None:
         return None
     label = _rule_label(entry)

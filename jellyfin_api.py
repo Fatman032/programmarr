@@ -10,6 +10,7 @@ No dependencies beyond the Python standard library.
 
 import json
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 import urllib.parse
 import urllib.request
 
@@ -70,22 +71,61 @@ def libraries(base_url, api_key):
             for lib in data if lib.get("ItemId")]
 
 
-def items(base_url, api_key, parent_id, item_type, fields=ITEM_FIELDS):
+# Cast and crew (People) is slow for Jellyfin to put together — ~1,600 movies took almost a
+# minute in one answer — so a listing that asks for it is read in pages, a few at a time.
+PEOPLE_PAGE = 100
+PEOPLE_WORKERS = 4
+
+
+def items(base_url, api_key, parent_id, item_type, fields=ITEM_FIELDS, extra=None):
     """Every item of `item_type` ("Movie", "Series", "Episode") in one library, or None if
-    Jellyfin couldn't be read.
+    Jellyfin couldn't be read. `extra` adds query filters (e.g. one person's items).
 
     CollapseBoxSetItems=false: by default Jellyfin folds the members of a collection into the
     collection itself, so a movie list would hold "Fish" (a collection) instead of the 10 movies
     in it. Anything that still isn't `item_type` is left out."""
-    query = urllib.parse.urlencode({
+    params = {
         "ParentId": parent_id, "Recursive": "true", "IncludeItemTypes": item_type,
         "CollapseBoxSetItems": "false",
-        "Fields": fields, "EnableImages": "false", "EnableUserData": "false",
-    })
-    data = get(base_url, api_key, f"/Items?{query}")
+        "Fields": fields, "EnableImages": "false", "EnableUserData": "false", **(extra or {}),
+    }
+    if "People" not in fields:
+        data = get(base_url, api_key, f"/Items?{urllib.parse.urlencode(params)}")
+        if not isinstance(data, dict):
+            return None
+        found = data.get("Items") or []
+    else:
+        first = get(base_url, api_key, f"/Items?{urllib.parse.urlencode({**params, 'StartIndex': 0, 'Limit': PEOPLE_PAGE})}")
+        if not isinstance(first, dict):
+            return None
+        total = int(first.get("TotalRecordCount") or 0)
+        starts = range(PEOPLE_PAGE, total, PEOPLE_PAGE)
+        with ThreadPoolExecutor(PEOPLE_WORKERS) as pool:
+            pages = list(pool.map(lambda start: get(base_url, api_key, "/Items?" + urllib.parse.urlencode(
+                {**params, "StartIndex": start, "Limit": PEOPLE_PAGE})), starts))
+        if any(not isinstance(p, dict) for p in pages):
+            return None
+        found = [i for p in [first, *pages] for i in p.get("Items") or []]
+    return [i for i in found if i.get("Type") in (None, item_type)]
+
+
+def person_name(base_url, api_key, name):
+    """Jellyfin's own spelling of a person's name ("tom hanks" -> "Tom Hanks"), since its
+    person filter only matches the exact spelling. The name as given when there's no such person;
+    None if Jellyfin couldn't be read."""
+    query = urllib.parse.urlencode({"SearchTerm": name, "Limit": 50, "EnableImages": "false"})
+    data = get(base_url, api_key, f"/Persons?{query}")
     if not isinstance(data, dict):
         return None
-    return [i for i in data.get("Items") or [] if i.get("Type") in (None, item_type)]
+    want = name.strip().lower()
+    return next((p["Name"] for p in data.get("Items") or [] if (p.get("Name") or "").strip().lower() == want), name)
+
+
+def person_items(base_url, api_key, parent_id, item_type, name, role, fields=ITEM_FIELDS):
+    """The items of `item_type` in one library that `name` is credited on as `role` ("Actor" /
+    "Director"), with their cast and crew — fast, unlike every item's cast. None if unreadable."""
+    return items(base_url, api_key, parent_id, item_type, fields=fields,
+                 extra={"Person": name, "PersonTypes": role})
 
 
 # What a collection member is, in Programmarr's words.

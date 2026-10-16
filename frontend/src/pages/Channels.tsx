@@ -633,7 +633,11 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
               placeholder={
                 addType === 'collection' ? 'Collection name'
                   : addType === 'movie' || addType === 'show' ? 'Title'
-                  : isRuleType ? (choicesFailed ? `${ruleServer} could not be read — type it exactly` : `Loading from ${ruleServer}…`)
+                  : isRuleType ? (choicesFailed ? `${ruleServer} could not be read — type it exactly`
+                    // Jellyfin is slow to hand over everyone's cast and crew (the rule itself is quick).
+                    : ruleServer === 'Jellyfin' && (addType === 'actor' || addType === 'director')
+                      ? 'Loading cast and crew from Jellyfin — this can take up to half a minute…'
+                      : `Loading from ${ruleServer}…`)
                   : 'Title (or {genre: Animation} and the like)'
               }
               value={newItem}
