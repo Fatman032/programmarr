@@ -4,7 +4,7 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.1.2] — 2026-10-15 (my build)
 
 ### Fixed
 
