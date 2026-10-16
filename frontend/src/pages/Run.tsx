@@ -2362,7 +2362,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
             </Group>
           )}
           <Group>
-            {!deployOk && <Button variant="light" color="orange" onClick={() => setPhase('idle')}>Back to review</Button>}
+            {!deployOk && <Button variant="light" color="orange" onClick={() => { setPhase('idle'); loadPreview(); }}>Back to review</Button>}
             <Button component="a" href="/" color="green" rightSection={<IconArrowRight size={15} />}>
               {deployOk ? 'Finish — go to Dashboard' : 'Go to Dashboard'}
             </Button>
@@ -2421,9 +2421,9 @@ function DeployStep({ setup }: { setup: SetupState }) {
                     <Text size="sm" c="dimmed">Nothing to do — lineup is already deployed.</Text>
                   )}
                   <Group gap="sm" mt="xs">
-                    <Button color="orange" leftSection={<IconCheck size={15} />}
-                      onClick={() => setPreviewConfirmed(true)}>
-                      Confirm deploy
+                    <Button color="orange" leftSection={<IconPlayerPlay size={15} />}
+                      onClick={() => { setPreviewConfirmed(true); runCascade(); }}>
+                      Apply Changes
                     </Button>
                     <Button variant="subtle" color="gray" onClick={loadPreview}>Refresh</Button>
                   </Group>
@@ -2433,7 +2433,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
           )}
 
           {/* Cascade running or confirmed */}
-          {(cascadeRunning || previewConfirmed) && (
+          {cascadeRunning && (
             <Stack gap="xs" mb="md">
               {cascadeRunning && (
                 <>
@@ -2444,11 +2444,6 @@ function DeployStep({ setup }: { setup: SetupState }) {
                     lines={cascadeLines}
                     done={false} success height={200} />
                 </>
-              )}
-              {previewConfirmed && !cascadeRunning && (
-                <Button color="orange" leftSection={<IconPlayerPlay size={15} />} onClick={runCascade}>
-                  Apply Changes
-                </Button>
               )}
             </Stack>
           )}
@@ -2555,10 +2550,10 @@ function DeployStep({ setup }: { setup: SetupState }) {
                       <Text size="sm" c="dimmed">Nothing to do — lineup is already deployed.</Text>
                     )}
                     <Group gap="sm" mt="xs">
-                      <Button color="orange" leftSection={<IconCheck size={15} />}
+                      <Button color="orange" leftSection={<IconPlayerPlay size={15} />}
                         disabled={includedCount === 0 || conflictNums.size > 0}
-                        onClick={() => setPreviewConfirmed(true)}>
-                        Confirm deploy
+                        onClick={() => { setPreviewConfirmed(true); runCascade(); }}>
+                        Deploy {includedCount} Channel{includedCount !== 1 ? 's' : ''}
                       </Button>
                       <Button variant="subtle" color="gray" onClick={() => { setPreviewConfirmed(false); loadPreview(); }}>Refresh</Button>
                     </Group>
@@ -2576,12 +2571,6 @@ function DeployStep({ setup }: { setup: SetupState }) {
                   lines={cascadeLines}
                   done={false} success height={200} />
               </Stack>
-            )}
-            {previewConfirmed && !cascadeRunning && (
-              <Button color="orange" leftSection={<IconPlayerPlay size={15} />} onClick={runCascade}
-                disabled={includedCount === 0 || conflictNums.size > 0}>
-                Deploy {includedCount} Channel{includedCount !== 1 ? 's' : ''}
-              </Button>
             )}
           </Card>
         </>

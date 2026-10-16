@@ -55,6 +55,13 @@ All notable changes to Programmarr are documented here. This project follows
   until the next Export, and the old file is left in place so an older version still finds it.
 - **The library picker says "Plex"** next to your Plex libraries instead of "Your Library".
 
+### Fixed
+
+- **One click to deploy, not two.** The Deploy step showed what would change, then **Confirm deploy**
+  only swapped the preview for a second button (**Apply Changes** / **Deploy N Channels**) that did
+  the actual deploy. The preview's button now deploys straight away. After a failed deploy,
+  **Back to review** shows a fresh preview.
+
 ### Notes
 
 - Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.
