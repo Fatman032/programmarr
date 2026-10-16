@@ -282,3 +282,23 @@ def test_an_added_collection_remembers_its_server(pr):
     data = json.loads((pr._test_data_dir / "channels.draft.json").read_text(encoding="utf-8"))
     assert [c["content"] for c in data["channels"]] == [[{"collection": "Disney", "server": "jellyfin"}],
                                                         [{"collection": "Marvel"}]]
+
+
+def test_members_are_asked_for_recursively(monkeypatch):
+    """Jellyfin answers 0 members for a collection unless asked recursively (or as a user) — the
+    real "Fish" collection came back empty and its channel was skipped."""
+    seen = []
+    monkeypatch.setattr(jellyfin_api, "get", lambda url, key, path, timeout=120: seen.append(path) or {"Items": []})
+    jellyfin_api.collection_members("http://jf", "K", "b1")
+    assert "Recursive=true" in seen[0] and "IncludeItemTypes=Movie%2CSeries" in seen[0] and "ParentId=b1" in seen[0]
+
+
+def test_a_missing_child_count_is_counted(monkeypatch):
+    """Jellyfin leaves ChildCount out unless asked as a user, so the list showed 0 items."""
+    def fake(url, key, path, timeout=120):
+        if "IncludeItemTypes=BoxSet" in path:
+            return {"Items": [{"Id": "b1", "Name": "Fish"}]}
+        assert "ParentId=b1" in path and "Limit=0" in path
+        return {"TotalRecordCount": 10, "Items": []}
+    monkeypatch.setattr(jellyfin_api, "get", fake)
+    assert jellyfin_api.collections("http://jf", "K")[0]["count"] == 10

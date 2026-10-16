@@ -189,6 +189,25 @@ def create_channel(tunarr_url, number, name, transcode_id, filler_list_ids=None,
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def collection_lookup_sections(uses_collections, plex_url, plex_token, has_jellyfin):
+    """The Plex sections a {"collection": ..} lookup searches — [] when Plex isn't set up (a
+    Jellyfin collection, beta, needs none). Exits when the lineup uses collections but neither
+    Plex nor Jellyfin is set up."""
+    if not uses_collections:
+        return []
+    has_plex = bool(plex_url and plex_token)
+    if not has_plex and not has_jellyfin:
+        print("ERROR: collections need a media server — set up Plex (URL + token) or Jellyfin "
+              "(URL + API key) in Settings")
+        sys.exit(1)
+    if not has_plex:
+        return []
+    print("\nDiscovering Plex sections for collection lookup...")
+    sections = get_plex_sections(plex_url, plex_token)
+    print(f"  Found {len(sections)} sections")
+    return sections
+
+
 def main():
     parser = argparse.ArgumentParser(description="Create Tunarr channels from channels.json")
     parser.add_argument("--json", default=DEFAULT_CHANNELS_FILE, help="Channel definition JSON file")
@@ -230,22 +249,17 @@ def main():
     else:
         print(f"Loaded {len(channels)} channels from {args.json}")
 
-    # ── Set up Plex collection lookup if needed ────────────────────────────────
+    # ── Set up collection lookup if needed (Plex and/or Jellyfin) ──────────────
     uses_collections = any(
         isinstance(item, dict) and "collection" in item
         for ch in channels
         for item in ch.get("content", [])
     )
     franchise_index = load_franchise_index(".")
-    plex_sections = []
     collection_cache = {}
-    if uses_collections:
-        if not plex_url or not plex_token:
-            print("ERROR: plex_url and plex_token required in config.json for collection support")
-            sys.exit(1)
-        print("\nDiscovering Plex sections for collection lookup...")
-        plex_sections = get_plex_sections(plex_url, plex_token)
-        print(f"  Found {len(plex_sections)} sections")
+    plex_sections = collection_lookup_sections(
+        uses_collections, plex_url, plex_token,
+        has_jellyfin=bool(cfg.get("jellyfin_url") and cfg.get("jellyfin_api_key")))
 
     # ── Build library index ────────────────────────────────────────────────────
     print("\nIndexing Tunarr library...")

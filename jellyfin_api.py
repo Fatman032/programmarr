@@ -91,17 +91,32 @@ def collections(base_url, api_key):
     data = get(base_url, api_key, f"/Items?{query}")
     if not isinstance(data, dict):
         return None
-    return [{"id": c["Id"], "name": (c.get("Name") or "").strip(), "count": int(c.get("ChildCount") or 0),
-             "summary": c.get("Overview") or "", "has_poster": "Primary" in (c.get("ImageTags") or {})}
-            for c in data.get("Items") or [] if c.get("Id") and (c.get("Name") or "").strip()]
+    out = []
+    for c in data.get("Items") or []:
+        if not c.get("Id") or not (c.get("Name") or "").strip():
+            continue
+        count = c.get("ChildCount")
+        if count is None:
+            # Jellyfin only fills ChildCount when asked as a user; count the members instead.
+            got = get(base_url, api_key, f"/Items?{_member_query(c['Id'], Limit=0)}")
+            count = (got or {}).get("TotalRecordCount") if isinstance(got, dict) else 0
+        out.append({"id": c["Id"], "name": c["Name"].strip(), "count": int(count or 0),
+                    "summary": c.get("Overview") or "", "has_poster": "Primary" in (c.get("ImageTags") or {})})
+    return out
+
+
+def _member_query(collection_id, **extra):
+    """The movies and shows in a collection. Without Recursive Jellyfin answers 0 for a collection
+    (its members live in the libraries, linked in) unless asked as a particular user."""
+    return urllib.parse.urlencode({"ParentId": collection_id, "Recursive": "true",
+                                   "IncludeItemTypes": "Movie,Series", **extra})
 
 
 def collection_members(base_url, api_key, collection_id):
     """The movies and shows in one Jellyfin collection, as [{"title", "kind" ("movie" / "show" /
     None for anything else), "year", "ids": {"tmdb", "imdb", "jellyfin"}}], or None if Jellyfin
     couldn't be read. The ids are what Programmarr matches by (TMDB, then IMDB, then Jellyfin's own id)."""
-    query = urllib.parse.urlencode({"ParentId": collection_id, "Fields": "ProviderIds",
-                                    "EnableImages": "false", "EnableUserData": "false"})
+    query = _member_query(collection_id, Fields="ProviderIds", EnableImages="false", EnableUserData="false")
     data = get(base_url, api_key, f"/Items?{query}")
     if not isinstance(data, dict):
         return None
