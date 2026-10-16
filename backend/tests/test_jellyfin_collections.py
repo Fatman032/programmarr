@@ -302,3 +302,16 @@ def test_a_missing_child_count_is_counted(monkeypatch):
         return {"TotalRecordCount": 10, "Items": []}
     monkeypatch.setattr(jellyfin_api, "get", fake)
     assert jellyfin_api.collections("http://jf", "K")[0]["count"] == 10
+
+
+# ── a collection must not hide its movies from the export ─────────────────────────────
+
+def test_the_export_asks_jellyfin_not_to_fold_collections(monkeypatch):
+    """By default Jellyfin lists a collection IN PLACE OF its members: once "Fish" existed, the
+    export lost its 10 movies and reported "Fish" as a movie not in Tunarr."""
+    seen = []
+    monkeypatch.setattr(jellyfin_api, "get", lambda url, key, path, timeout=120: seen.append(path) or {"Items": [
+        {"Name": "Antz", "Type": "Movie"}, {"Name": "Fish", "Type": "BoxSet"}]})
+    got = jellyfin_api.items("http://jf", "K", "lib", "Movie")
+    assert "CollapseBoxSetItems=false" in seen[0]
+    assert [i["Name"] for i in got] == ["Antz"]

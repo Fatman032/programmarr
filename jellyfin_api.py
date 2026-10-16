@@ -72,15 +72,20 @@ def libraries(base_url, api_key):
 
 def items(base_url, api_key, parent_id, item_type, fields=ITEM_FIELDS):
     """Every item of `item_type` ("Movie", "Series", "Episode") in one library, or None if
-    Jellyfin couldn't be read."""
+    Jellyfin couldn't be read.
+
+    CollapseBoxSetItems=false: by default Jellyfin folds the members of a collection into the
+    collection itself, so a movie list would hold "Fish" (a collection) instead of the 10 movies
+    in it. Anything that still isn't `item_type` is left out."""
     query = urllib.parse.urlencode({
         "ParentId": parent_id, "Recursive": "true", "IncludeItemTypes": item_type,
+        "CollapseBoxSetItems": "false",
         "Fields": fields, "EnableImages": "false", "EnableUserData": "false",
     })
     data = get(base_url, api_key, f"/Items?{query}")
     if not isinstance(data, dict):
         return None
-    return data.get("Items") or []
+    return [i for i in data.get("Items") or [] if i.get("Type") in (None, item_type)]
 
 
 # What a collection member is, in Programmarr's words.
@@ -115,7 +120,7 @@ def _member_query(collection_id, **extra):
     """The movies and shows in a collection. Without Recursive Jellyfin answers 0 for a collection
     (its members live in the libraries, linked in) unless asked as a particular user."""
     return urllib.parse.urlencode({"ParentId": collection_id, "Recursive": "true",
-                                   "IncludeItemTypes": "Movie,Series", **extra})
+                                   "IncludeItemTypes": "Movie,Series", "CollapseBoxSetItems": "false", **extra})
 
 
 def collection_members(base_url, api_key, collection_id):

@@ -53,6 +53,10 @@ All notable changes to Programmarr are documented here. This project follows
 - **Collection members are matched the same way on both servers:** TMDB, then IMDB, then the server's
   own id, then title + year. Plex members now carry their TMDB/IMDB numbers too (Plex `includeGuids`),
   so a Plex collection also finds a movie Tunarr holds from another server.
+- **A Jellyfin collection no longer hides its movies from Export/Scan.** Jellyfin lists a collection in
+  place of its members unless asked not to, so once a "Fish" collection existed the export lost its
+  10 movies and reported "Fish" as a movie not in Tunarr. It now asks for every movie and show
+  (`CollapseBoxSetItems=false`) and keeps only movies and shows.
 - **The export file is now `library.csv`** (it was `plex_library.csv`), since it can come from Plex,
   Jellyfin, or both. An install that hasn't run Export since still reads its old `plex_library.csv`
   until the next Export, and the old file is left in place so an older version still finds it.
