@@ -2270,7 +2270,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
               </Text>
               <Stack gap={2} mb="sm">
                 <Text size="sm">1. Open <b>Jellyfin → Dashboard → Live TV</b></Text>
-                <Text size="sm">2. Under <b>Tuner Devices</b>, click <b>+</b>, choose <b>M3U Tuner</b>, and paste:</Text>
+                <Text size="sm">2. Under <b>Tuner Devices</b>, click <b>+</b> (Add tuner device). In the <b>Tuner type</b> dropdown,
+                  choose <b>M3U Tuner</b>. Under <b>File or URL</b>, paste:</Text>
               </Stack>
               {m3uUrl && (
                 <Group gap="xs" wrap="nowrap" mb="sm">
@@ -2281,7 +2282,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
                   </Button>
                 </Group>
               )}
-              <Text size="sm" mb={4}>3. Under <b>TV Guide Data Providers</b>, click <b>+</b>, choose <b>XMLTV</b>, and paste:</Text>
+              <Text size="sm" mb="sm">Leave the other settings as they are and click <b>Save</b>.</Text>
+              <Text size="sm" mb={4}>3. Under <b>TV Guide Data Providers</b>, click <b>+</b> and choose <b>XMLTV</b>. Under <b>File or URL</b>, paste:</Text>
               {xmltvUrl && (
                 <Group gap="xs" wrap="nowrap" mb="sm">
                   <Code style={{ flex: 1, overflowX: 'auto', whiteSpace: 'nowrap' }}>{xmltvUrl}</Code>
@@ -2291,7 +2293,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
                   </Button>
                 </Group>
               )}
-              <Text size="sm" mb="xs">4. Save, then refresh the guide data. Your channels appear under Live TV.</Text>
+              <Text size="sm" mb="sm">Leave the other settings as they are and click <b>Save</b>.</Text>
+              <Text size="sm" mb="xs">4. Click <b>Refresh Guide Data</b>. Your channels will appear under Live TV.</Text>
               {jellyfinWebUrl && <Button component="a" href={jellyfinWebUrl} target="_blank" rel="noreferrer" variant="light" color="grape" size="xs" leftSection={<IconExternalLink size={13} />}>Open Jellyfin</Button>}
             </Alert>
           )}
