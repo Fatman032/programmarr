@@ -6,6 +6,9 @@ After running create.py, Plex may not know about new channels.
 This script attempts to update Plex's DVR channel mappings automatically.
 If it can't do it via API, it prints the XMLTV URL and manual steps.
 
+Exit codes: 0 = Plex has every channel (or --probe); 2 = manual steps needed (no DVR set up yet,
+or Plex didn't take the new channels), so the deploy screen shows the one-time Plex steps.
+
 Usage:
     python sync_plex.py            # check and attempt auto-sync
     python sync_plex.py --probe    # show current state, no changes
@@ -180,7 +183,7 @@ def main():
     if not dvr or not device:
         print("  No DVR configured in Plex.")
         print_manual_instructions(tunarr_url)
-        sys.exit(0)
+        sys.exit(2)  # not 0: the deploy screen shows its one-time Plex steps only on a failed sync
 
     mapped = get_mapped_channel_numbers(device)
     tunarr_nums = set(xmltv_map.keys())
@@ -222,6 +225,7 @@ def main():
     # ── Fall back to manual instructions ─────────────────────────────────────
     print("\nManual setup required to add the missing channels.")
     print_manual_instructions(tunarr_url)
+    sys.exit(2)
 
 
 if __name__ == "__main__":
