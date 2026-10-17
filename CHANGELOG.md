@@ -87,6 +87,14 @@ All notable changes to Programmarr are documented here. This project follows
   server, the auto-update and deploys), and Save and Apply reuses the read the editor did when it
   opened (kept 5 minutes) instead of reading everything again — a save takes seconds, not a minute.
   Something added to the library in those few minutes joins at the next refresh.
+- **A Build Channels run only touches its own server's channels.** With both servers set up, a
+  Jellyfin run used to restore your Plex Planner picks, treat a pick named like an existing Plex
+  channel as an *update* to it (turning it into a Jellyfin channel), and a full rebuild deleted every
+  channel not ticked to keep — Plex's included. Now the Planner remembers picks per server
+  (`planner_state.json` is Plex's, `planner_state.jellyfin.json` Jellyfin's), the deploy preview and
+  Add/update compare only against the run's server's channels (the other server's are listed as
+  "on your other server (untouched)" and kept), and a full rebuild always keeps the other server's
+  channels.
 - **A scan reads ONE server.** With Plex and Jellyfin both set up, Export/Scan reads only the server
   picked in Build Channels (`--server plex|jellyfin` on the command line, Plex by default) — its
   libraries, its "is it in Tunarr?" check (a Plex title doesn't count as synced because Tunarr has

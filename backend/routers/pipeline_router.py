@@ -2212,7 +2212,38 @@ class DeployRequest(BaseModel):
     no_delete: bool = False
 
 
-def _reconcile_channels_json(protected_numbers: list[int]) -> None:
+# ── One server per run (beta) ──────────────────────────────────────────────────────
+# With Plex and Jellyfin both set up, each Build Channels run is for ONE of them. A run only
+# ever creates, updates or deletes its own server's channels; the other server's are left alone
+# (listed, kept in channels.json, protected from a full rebuild), and the Planner remembers
+# picks per server.
+
+def _planner_state_path(server: str | None = None) -> Path:
+    """Planner memory per server: planner_state.json is Plex's (every install before Jellyfin
+    support only had Plex), planner_state.jellyfin.json is Jellyfin's."""
+    if server not in channel_engine.SERVERS:
+        server = channel_tags.default_for(_load_config())
+    return DATA_DIR / ("planner_state.jellyfin.json" if server == "jellyfin" else "planner_state.json")
+
+
+def _run_server(draft_data: dict) -> str:
+    """The server a draft (one Build Channels run) is for: its own "server", else the one its
+    channels are tagged with, else the default for what's set up."""
+    own = (draft_data or {}).get("server")
+    if own in channel_engine.SERVERS:
+        return own
+    tags = {c.get("server") for c in (draft_data or {}).get("channels", []) if c.get("server") in channel_engine.SERVERS}
+    return tags.pop() if len(tags) == 1 else channel_tags.default_for(_load_config())
+
+
+def _split_by_server(channels: list[dict], server: str) -> tuple[list[dict], list[dict]]:
+    """(this server's channels, the other server's) — an untagged channel counts as the default's."""
+    default = channel_tags.default_for(_load_config())
+    mine = [c for c in channels if (c.get("server") if c.get("server") in channel_engine.SERVERS else default) == server]
+    return mine, [c for c in channels if c not in mine]
+
+
+def _reconcile_channels_json(protected_numbers: list[int], server: str | None = None) -> None:
     """Write channels.json to mirror what create.py ACTUALLY pushed, then clear staging files.
 
     The deployed set is deploy_temp.json — the selected, number-remapped subset that
@@ -2250,7 +2281,7 @@ def _reconcile_channels_json(protected_numbers: list[int]) -> None:
 
     # Persist managed_names so surgical-deploy knows which channels the planner owns.
     deployed_names = [(c.get("name") or "").strip() for c in deployed_channels if c.get("name")]
-    planner_state_path = DATA_DIR / "planner_state.json"
+    planner_state_path = _planner_state_path(server)
     existing_ps: dict = {}
     if planner_state_path.exists():
         try:
@@ -2272,7 +2303,7 @@ def _reconcile_channels_json(protected_numbers: list[int]) -> None:
             p.unlink()
 
 
-async def _deploy_and_reconcile(args: list[str], protected_numbers: list[int]):
+async def _deploy_and_reconcile(args: list[str], protected_numbers: list[int], server: str | None = None):
     """Stream create.py; reconcile channels.json from the deployed set on success.
 
     Reconcile runs BEFORE forwarding the terminal 'done' event so any client
@@ -2287,7 +2318,7 @@ async def _deploy_and_reconcile(args: list[str], protected_numbers: list[int]):
                 payload = None
             if payload and payload.get("type") == "done" and payload.get("returncode") == 0:
                 try:
-                    _reconcile_channels_json(protected_numbers)
+                    _reconcile_channels_json(protected_numbers, server)
                 except Exception as e:
                     yield f"data: {json.dumps({'type': 'line', 'text': f'WARNING: reconcile failed: {e}'})}\n\n"
         yield chunk
@@ -2308,7 +2339,17 @@ async def run_deploy_selective(req: DeployRequest):
         for ch in data.get("channels", [])
         if ch.get("number") in sel_map
     ]
+    run_server = _run_server(data)
     data["channels"] = new_channels
+
+    # A rebuild for one server never deletes the other server's channels, whatever is ticked.
+    try:
+        with open(DATA_DIR / "channels.json", encoding="utf-8") as f:
+            saved = json.load(f).get("channels", [])
+    except (FileNotFoundError, ValueError):
+        saved = []
+    _, other_server = _split_by_server(saved, run_server)
+    protected = sorted(set(req.protected_numbers) | {c["number"] for c in other_server if c.get("number") is not None})
 
     temp_path = DATA_DIR / "deploy_temp.json"
     with open(temp_path, "w", encoding="utf-8") as f:
@@ -2317,9 +2358,9 @@ async def run_deploy_selective(req: DeployRequest):
     args = ["--json", "deploy_temp.json"]
     if req.no_delete:
         args.append("--no-delete")
-    if req.protected_numbers:
-        args += ["--protect", ",".join(str(n) for n in req.protected_numbers)]
-    return _sse(_deploy_and_reconcile(args, req.protected_numbers))
+    if protected:
+        args += ["--protect", ",".join(str(n) for n in protected)]
+    return _sse(_deploy_and_reconcile(args, protected, run_server))
 
 
 @router.get("/pipeline/draft")
@@ -2341,13 +2382,13 @@ def get_draft():
 
 
 @router.get("/pipeline/planner-state")
-def get_planner_state():
+def get_planner_state(server: str = ""):
     """Return the persisted Planner intent (data/planner_state.json), or {} if absent.
 
     Saved after every successful Build; restored when the user opens Add/Edit mode.
-    Cleared (file deleted) when the user chooses Nuke.
+    Cleared (file deleted) when the user chooses Nuke. Kept per server (`server`).
     """
-    p = DATA_DIR / "planner_state.json"
+    p = _planner_state_path(server)
     if not p.exists():
         return {}
     try:
@@ -2358,11 +2399,11 @@ def get_planner_state():
 
 
 @router.put("/pipeline/planner-state")
-def save_planner_state(state: dict):
-    """Persist the full Planner intent so Add/Edit mode can restore prior selections."""
-    p = DATA_DIR / "planner_state.json"
+def save_planner_state(state: dict, server: str = ""):
+    """Persist the full Planner intent so Add/Edit mode can restore prior selections (per server)."""
+    p = _planner_state_path(server)
     try:
-        tmp = DATA_DIR / "planner_state.json.tmp"
+        tmp = p.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
         tmp.replace(p)
@@ -2372,25 +2413,26 @@ def save_planner_state(state: dict):
 
 
 @router.delete("/pipeline/planner-state")
-def delete_planner_state():
-    """Clear planner_state.json (called on Nuke, so the next Add/Edit starts blank)."""
-    p = DATA_DIR / "planner_state.json"
+def delete_planner_state(server: str = ""):
+    """Clear the Planner memory for one server (called on Nuke, so the next Add/Edit starts blank)."""
+    p = _planner_state_path(server)
     if p.exists():
         p.unlink()
     return {"ok": True}
 
 
-def _load_deploy_inputs() -> tuple[list[dict], list[dict], set[str]]:
-    """Load the three inputs shared by deploy-preview and surgical-deploy.
+def _load_deploy_inputs() -> tuple[list[dict], list[dict], set[str], list[dict], str]:
+    """Load the inputs shared by deploy-preview and surgical-deploy.
 
-    Returns (desired, deployed, prior_managed) where:
-      desired      — channels from channels.draft.json
-      deployed     — channels from channels.json (managed set only)
-      prior_managed — lowercased name set from planner_state.json["managed_names"]
+    Returns (desired, deployed, prior_managed, other_server, server) where:
+      desired       — channels from channels.draft.json
+      deployed      — channels from channels.json for THIS run's server (managed set only)
+      prior_managed — lowercased name set from that server's Planner memory ["managed_names"]
+      other_server  — the other server's channels: never created, updated or deleted by this run
+      server        — the server this run is for (see _run_server)
     """
     draft_path = DATA_DIR / "channels.draft.json"
     canon_path = DATA_DIR / "channels.json"
-    planner_state_path = DATA_DIR / "planner_state.json"
 
     if not draft_path.exists():
         raise HTTPException(404, "channels.draft.json not found — compose a lineup first")
@@ -2398,6 +2440,8 @@ def _load_deploy_inputs() -> tuple[list[dict], list[dict], set[str]]:
     with open(draft_path, encoding="utf-8") as f:
         draft_data = json.load(f)
     desired: list[dict] = draft_data.get("channels", [])
+    server = _run_server(draft_data)
+    planner_state_path = _planner_state_path(server)
 
     if canon_path.exists():
         with open(canon_path, encoding="utf-8") as f:
@@ -2405,6 +2449,7 @@ def _load_deploy_inputs() -> tuple[list[dict], list[dict], set[str]]:
         deployed: list[dict] = canon_data.get("channels", []) if isinstance(canon_data, dict) else canon_data
     else:
         deployed = []
+    deployed, other_server = _split_by_server(deployed, server)
 
     planner_state: dict = {}
     if planner_state_path.exists():
@@ -2417,7 +2462,7 @@ def _load_deploy_inputs() -> tuple[list[dict], list[dict], set[str]]:
         n.strip().lower() for n in planner_state.get("managed_names", []) if n
     }
 
-    return desired, deployed, prior_managed
+    return desired, deployed, prior_managed, other_server, server
 
 
 class DeployPreviewRequest(BaseModel):
@@ -2441,7 +2486,7 @@ def deploy_preview(req: DeployPreviewRequest = DeployPreviewRequest()):
     the "delete" bucket (they will be wiped and recreated from scratch).  Foreign
     (hand-authored) channels are listed in "foreign" as always.
     """
-    desired, deployed, prior_managed = _load_deploy_inputs()
+    desired, deployed, prior_managed, other_server, _server = _load_deploy_inputs()
 
     def _entry(ch: dict) -> dict:
         return {"number": ch.get("number"), "name": ch.get("name", "")}
@@ -2466,6 +2511,7 @@ def deploy_preview(req: DeployPreviewRequest = DeployPreviewRequest()):
             "delete": delete_items,
             "unchanged": [],
             "foreign": foreign_items,
+            "other_server": [_entry(ch) for ch in other_server],   # kept: the other server's channels
         }
 
     # Edit mode: surgical classify.
@@ -2484,6 +2530,7 @@ def deploy_preview(req: DeployPreviewRequest = DeployPreviewRequest()):
         "delete": [_entry(ch) for ch in diff["delete"]],
         "unchanged": [_entry(ch) for ch in diff["unchanged"]],
         "foreign": [_entry(ch) for ch in diff["foreign"]],
+        "other_server": [_entry(ch) for ch in other_server],   # untouched: the other server's channels
     }
 
 
@@ -2523,11 +2570,11 @@ async def run_surgical_deploy():
     with open(draft_path, encoding="utf-8") as f:
         draft_data = json.load(f)
 
-    desired, deployed, prior_managed = _load_deploy_inputs()
+    desired, deployed, prior_managed, other_server, run_server = _load_deploy_inputs()
     canon_path = DATA_DIR / "channels.json"
 
-    # Also reload planner_state for the managed_names merge after deploy.
-    planner_state_path = DATA_DIR / "planner_state.json"
+    # Also reload this server's Planner memory for the managed_names merge after deploy.
+    planner_state_path = _planner_state_path(run_server)
     planner_state: dict = {}
     if planner_state_path.exists():
         try:
@@ -2683,8 +2730,10 @@ async def run_surgical_deploy():
             # new (create) channels use their draft number. (See merge_deployed_numbers.)
             new_managed = channel_engine.merge_deployed_numbers(desired, deployed)
 
-            # Append foreign channels — they were not in desired but must be kept.
+            # Append foreign channels — they were not in desired but must be kept — and the
+            # other server's channels, which this run never touches.
             new_managed.extend(diff["foreign"])
+            new_managed.extend(other_server)
 
             new_managed.sort(key=lambda c: c.get("number", 0))
             out_data = {

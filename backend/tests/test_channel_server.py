@@ -306,3 +306,73 @@ def test_the_channel_lists_check_reads_only_the_servers_the_channels_use(monkeyp
                         lambda url, servers=None: reads.append(servers) or ({}, {}, {}))
     channels_router._cached_library("http://t")
     assert reads == [{"plex"}]
+
+
+# ── one server per run: a run never touches the other server's channels ──────────────
+
+@pytest.fixture
+def run_both(pr, tmp_path):
+    """Both servers set up; a Plex channel deployed; the Plex Planner remembers it."""
+    d = pr._test_data_dir
+    (d / "config.json").write_text(json.dumps({"tunarr_url": "http://t", **PLEX_CFG, **JF_CFG}))
+    (d / "channels.json").write_text(json.dumps({"channels": [
+        {"number": 1, "name": "2020s Comedy", "server": "plex", "content": ["A"]},
+        {"number": 2, "name": "Old Plex Pick", "server": "plex", "content": ["B"]}]}))
+    (d / "planner_state.json").write_text(json.dumps({"managed_names": ["2020s Comedy", "Old Plex Pick"]}))
+    return pr
+
+
+def _draft(pr, server, channels):
+    (pr._test_data_dir / "channels.draft.json").write_text(json.dumps({"server": server, "channels": channels}))
+
+
+def test_a_jellyfin_run_never_updates_or_deletes_plex_channels(run_both):
+    """A restored "2020s Comedy" pick in a Jellyfin run used to update the PLEX channel of that
+    name into a Jellyfin one; and Plex channels missing from the run looked like removals."""
+    _draft(run_both, "jellyfin", [{"number": 10, "name": "2020s Comedy", "server": "jellyfin", "content": ["X"]}])
+    got = run_both.deploy_preview(run_both.DeployPreviewRequest(mode="edit"))
+    assert [c["name"] for c in got["create"]] == ["2020s Comedy"]
+    assert got["update"] == [] and got["delete"] == []
+    assert sorted(c["name"] for c in got["other_server"]) == ["2020s Comedy", "Old Plex Pick"]
+
+
+def test_a_plex_run_still_updates_and_removes_its_own_channels(run_both):
+    _draft(run_both, "plex", [{"number": 1, "name": "2020s Comedy", "server": "plex", "content": ["changed"]}])
+    got = run_both.deploy_preview(run_both.DeployPreviewRequest(mode="edit"))
+    assert [c["name"] for c in got["update"]] == ["2020s Comedy"]
+    assert [c["name"] for c in got["delete"]] == ["Old Plex Pick"]
+    assert got["other_server"] == []
+
+
+def test_a_jellyfin_full_rebuild_keeps_every_plex_channel(run_both, monkeypatch):
+    """A full rebuild deletes every channel not ticked to keep — never the other server's."""
+    seen = {}
+    async def fake_deploy(args, protected, server=None):
+        seen.update(args=args, protected=protected, server=server)
+        yield ""
+    monkeypatch.setattr(run_both, "_deploy_and_reconcile", fake_deploy)
+    _draft(run_both, "jellyfin", [{"number": 10, "name": "Fish", "server": "jellyfin", "content": ["X"]}])
+    import asyncio
+    resp = asyncio.run(run_both.run_deploy_selective(run_both.DeployRequest(
+        selections=[run_both.DeploySelection(original_number=10, deploy_number=10, include=True)])))
+    async def drain():
+        async for _ in resp.body_iterator:
+            pass
+    asyncio.run(drain())
+    assert seen["protected"] == [1, 2] and "--protect" in seen["args"] and seen["server"] == "jellyfin"
+
+
+def test_the_planner_remembers_picks_per_server(run_both):
+    run_both.save_planner_state({"selected": {"g:Comedy": True}}, server="jellyfin")
+    assert run_both.get_planner_state(server="jellyfin") == {"selected": {"g:Comedy": True}}
+    assert run_both.get_planner_state(server="plex") == {"managed_names": ["2020s Comedy", "Old Plex Pick"]}
+    assert (run_both._test_data_dir / "planner_state.jellyfin.json").exists()
+    run_both.delete_planner_state(server="jellyfin")
+    assert run_both.get_planner_state(server="jellyfin") == {}
+    assert run_both.get_planner_state(server="plex") != {}
+
+
+def test_a_drafts_server_comes_from_its_channels_when_not_stated(run_both):
+    assert run_both._run_server({"channels": [{"server": "jellyfin"}]}) == "jellyfin"
+    assert run_both._run_server({"server": "plex", "channels": [{"server": "jellyfin"}]}) == "plex"
+    assert run_both._run_server({"channels": []}) == "plex"

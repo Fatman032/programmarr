@@ -143,14 +143,16 @@ export const api = {
   getChannelReviews: () => req<Record<string, ChannelReview>>('/channel-reviews'),
 
   // ── Planner state ──
-  getPlannerState: () => req<PlannerStateFile>('/pipeline/planner-state'),
-  savePlannerState: (state: PlannerStateFile) =>
-    req<{ ok: boolean }>('/pipeline/planner-state', {
+  // The Planner remembers picks per server (Plex / Jellyfin), so one server's run never restores the other's.
+  getPlannerState: (server?: 'plex' | 'jellyfin') =>
+    req<PlannerStateFile>(`/pipeline/planner-state${server ? `?server=${server}` : ''}`),
+  savePlannerState: (state: PlannerStateFile, server?: 'plex' | 'jellyfin') =>
+    req<{ ok: boolean }>(`/pipeline/planner-state${server ? `?server=${server}` : ''}`, {
       method: 'PUT',
       body: JSON.stringify(state),
     }),
-  deletePlannerState: () =>
-    req<{ ok: boolean }>('/pipeline/planner-state', { method: 'DELETE' }),
+  deletePlannerState: (server?: 'plex' | 'jellyfin') =>
+    req<{ ok: boolean }>(`/pipeline/planner-state${server ? `?server=${server}` : ''}`, { method: 'DELETE' }),
 
   // ── Deploy preview (diff without Tunarr writes) ──
   deployPreview: (mode: 'edit' | 'nuke') =>
@@ -462,6 +464,8 @@ export interface DeployPreviewResult {
   delete: DeployPreviewChannel[];
   unchanged: DeployPreviewChannel[];
   foreign: DeployPreviewChannel[];
+  /** The other server's channels (beta): a run for one server never touches them. */
+  other_server?: DeployPreviewChannel[];
 }
 
 // ── SSE streaming ──────────────────────────────────────────────────────────────

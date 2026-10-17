@@ -1046,7 +1046,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
 
     Promise.all([
       api.getFacets(),
-      api.getPlannerState().catch(() => null),
+      api.getPlannerState(setup.server).catch(() => null),
       api.getProgrammingBlocks().catch(() => [] as ProgrammingBlock[]),
     ])
       .then(([f, savedState, blocks]) => {
@@ -1130,7 +1130,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
       autoUpdate,
     };
     const timer = setTimeout(() => {
-      api.savePlannerState(stateToSave).catch(() => {});
+      api.savePlannerState(stateToSave, setup.server).catch(() => {});
     }, 500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1247,7 +1247,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
         commPad,
         autoUpdate,
       };
-      api.savePlannerState(stateToSave).catch(() => {});
+      api.savePlannerState(stateToSave, setup.server).catch(() => {});
 
       onDone();
     } catch (e: any) {
@@ -1267,7 +1267,7 @@ function PlannerStep({ planner, setPlanner, setup, aiExtras, setAiExtras, onDone
     setCommListIds([]);
     setCommPad('5');
     setAutoUpdate(false);
-    api.deletePlannerState().catch(() => {});
+    api.deletePlannerState(setup.server).catch(() => {});
     restoredRef.current = false;
     setTimeout(() => { restoredRef.current = true; }, 0);
     closeReset();
@@ -2461,6 +2461,9 @@ function DeployStep({ setup }: { setup: SetupState }) {
                   {preview.foreign.length > 0 && (
                     <PreviewBucket label="not managed by Programmarr (untouched)" channels={preview.foreign} color="dimmed" symbol="·" />
                   )}
+                  {(preview.other_server?.length ?? 0) > 0 && (
+                    <PreviewBucket label="on your other server (untouched)" channels={preview.other_server!} color="dimmed" symbol="·" />
+                  )}
                   {preview.create.length === 0 && preview.update.length === 0 && preview.delete.length === 0 && (
                     <Text size="sm" c="dimmed">Nothing to do — lineup is already deployed.</Text>
                   )}
@@ -2589,6 +2592,9 @@ function DeployStep({ setup }: { setup: SetupState }) {
                     )}
                     {preview.foreign.length > 0 && (
                       <PreviewBucket label="not managed by Programmarr (untouched)" channels={preview.foreign} color="dimmed" symbol="·" />
+                    )}
+                    {(preview.other_server?.length ?? 0) > 0 && (
+                      <PreviewBucket label="on your other server (untouched)" channels={preview.other_server!} color="dimmed" symbol="·" />
                     )}
                     {preview.create.length === 0 && preview.update.length === 0 && preview.delete.length === 0 && (
                       <Text size="sm" c="dimmed">Nothing to do — lineup is already deployed.</Text>
