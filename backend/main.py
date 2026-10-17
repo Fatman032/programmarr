@@ -39,9 +39,9 @@ async def lifespan(app: FastAPI):
     try:
         tagged = channel_tags.tag_files(DATA_DIR, cfg)
         if tagged:
-            print(f"Tagged {tagged} channel(s) from before server tags as Plex channels")
+            print(f"Tagged {tagged} channel(s) from before server tags as Plex channels", flush=True)
     except Exception as e:
-        print(f"WARNING: could not tag channels with their server: {e}")
+        print(f"WARNING: could not tag channels with their server: {e}", flush=True)
     # Start the live-channel scheduler loop (no-op unless recipes_enabled in config)
     scheduler_task = asyncio.create_task(scheduler.scheduler_loop())
     try:
