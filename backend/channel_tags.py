@@ -10,9 +10,17 @@ now. A fresh install has no channels; each one is tagged when it's made.
 """
 
 import json
+import os
+import sys
 from pathlib import Path
 
-import channel_engine
+# channel_engine lives at the repo root (the scripts dir), like scheduler.py finds it — main.py
+# loads this module before anything else has put that folder on the path.
+_SCRIPTS_DIR = Path(os.environ.get("PROGRAMMARR_SCRIPTS", Path(__file__).parent.parent))
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+import channel_engine  # noqa: E402
 
 CHANNEL_FILES = ("channels.json", "channels.draft.json")
 UPGRADE_SERVER = "plex"   # what every pre-tag channel is

@@ -58,3 +58,16 @@ def test_every_script_the_app_runs_is_in_the_image():
     run = set(re.findall(r'_stream\(\s*"([\w.]+\.py)"', text))
     assert {"sync_plex.py", "sync_jellyfin.py", "export.py"} <= run
     assert not run - copied, "add these to the Dockerfile COPY line: " + ", ".join(sorted(run - copied))
+
+
+def test_the_app_starts_the_way_the_container_starts_it():
+    """The container runs `python main.py` from backend/ with nothing else on the path. A module
+    main.py loads early (channel_tags) once couldn't find channel_engine there and the app died on
+    start — the tests hadn't noticed, because they put the repo root on the path themselves."""
+    import os
+    import subprocess
+    import sys
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PROGRAMMARR_SCRIPTS")}
+    r = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, '.'); import main"],
+                       cwd=ROOT / "backend", env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
