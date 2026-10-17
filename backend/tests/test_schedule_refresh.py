@@ -107,7 +107,7 @@ def cycle(tmp_path, monkeypatch):
     def resolved(*a, **k):
         return [{"type": "Movie", "title": "M", "programs": [{"id": i} for i in sorted(s.fresh)]}], []
 
-    monkeypatch.setattr(channel_engine, "build_library_index_with_ids", lambda url: ({}, {}, {}))
+    monkeypatch.setattr(channel_engine, "build_library_index_with_ids", lambda url, servers=None: ({}, {}, {}))
     monkeypatch.setattr(channel_engine, "resolve_content", resolved)
     monkeypatch.setattr(channel_engine, "load_franchise_index", lambda d: {})
     monkeypatch.setattr(channel_engine, "find_channel_by_number", lambda url, n: _tch(s.days_left))
@@ -288,7 +288,7 @@ def test_a_manual_apply_restarts_the_schedule_and_is_remembered(tmp_path, monkey
         {"number": 5, "name": "Test", "shuffle": "shuffle", "content": ["x"]}]}))
     items = [{"type": "Movie", "title": "M", "programs": [{"id": "p1"}, {"id": "p2"}]}]
     pushed = []
-    monkeypatch.setattr(channel_engine, "build_library_index_with_ids", lambda url: ({}, {}, {}))
+    monkeypatch.setattr(channel_engine, "build_library_index_with_ids", lambda url, servers=None: ({}, {}, {}))
     monkeypatch.setattr(channel_engine, "resolve_content", lambda *a, **k: (items, []))
     monkeypatch.setattr(channel_engine, "load_franchise_index", lambda d: {})
     monkeypatch.setattr(channel_engine, "find_channel_by_number", lambda url, n: {"id": "tid", "number": n, "name": "Test"})

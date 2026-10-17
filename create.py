@@ -265,7 +265,8 @@ def main():
     # ── Build library index ────────────────────────────────────────────────────
     print("\nIndexing Tunarr library...")
     try:
-        movie_map, show_map, id_index = build_library_index_with_ids(tunarr_url)
+        movie_map, show_map, id_index = build_library_index_with_ids(
+            tunarr_url, {channel_server(ch, plex_url, plex_token) for ch in channels})
     except ChannelEngineError as e:
         print(f"ERROR: {e}")
         sys.exit(1)

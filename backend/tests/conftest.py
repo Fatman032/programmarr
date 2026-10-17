@@ -29,6 +29,16 @@ def _no_jellyfin_left_over():
     channel_engine.set_jellyfin()
 
 
+@pytest.fixture(autouse=True)
+def _no_library_read_left_over():
+    """Save and Apply reuses the channels page's recent library read; a read one test made must
+    never be handed to the next."""
+    from routers import channels_router
+    channels_router._index_cache.clear()
+    yield
+    channels_router._index_cache.clear()
+
+
 # Exact header export.py writes (see export.py fieldnames). Multi-valued columns
 # (Genres / Director / Actors / Country / Mood / Style) are pipe-separated.
 CSV_FIELDS = ["Title", "Year", "Type", "Rating", "Genres",

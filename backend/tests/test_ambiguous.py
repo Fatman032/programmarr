@@ -134,7 +134,7 @@ def test_a_long_ambiguous_list_is_capped_but_counted():
 @pytest.fixture
 def server(tmp_path, monkeypatch):
     monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(channels_router, "_index_cache", {"at": 0.0, "index": None})
+    monkeypatch.setattr(channels_router, "_index_cache", {})   # empty: the next read goes to Tunarr
     (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://tunarr:8000"}))
     _library(monkeypatch, [("mv", "movies"), ("tv", "shows")],
              {"mv": [_movie("Aladdin", 2019, tmdb="420817", plex="502", tunarr="a19"),
@@ -145,7 +145,7 @@ def server(tmp_path, monkeypatch):
     calls = {"builds": 0, "deploys": 0}
     real = channel_engine.build_library_index_with_ids
     monkeypatch.setattr(channel_engine, "build_library_index_with_ids",
-                        lambda url: calls.__setitem__("builds", calls["builds"] + 1) or real(url))
+                        lambda url, servers=None: calls.__setitem__("builds", calls["builds"] + 1) or real(url))
     monkeypatch.setattr(channel_engine, "update_channel_in_place",
                         lambda *a, **k: calls.__setitem__("deploys", calls["deploys"] + 1))
     (tmp_path / "channels.json").write_text(json.dumps({"channels": [

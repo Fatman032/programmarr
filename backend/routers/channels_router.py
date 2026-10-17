@@ -124,7 +124,11 @@ async def apply_channel(number: int):
         raise HTTPException(400, "Tunarr not configured")
 
     def _do():
-        movie_map, show_map, id_index = channel_engine.build_library_index_with_ids(tunarr_url)
+        # The library read the editor's check did when it opened (its server only) — not a second
+        # full read of Tunarr. Something added to the library in the last few minutes joins at the
+        # next refresh, the way a live rule's new titles do.
+        movie_map, show_map, id_index = _cached_library(
+            tunarr_url, servers={channel_engine.channel_server(ch, plex_url, plex_token)})
 
         plex_sections, collection_cache = [], {}
         if any(isinstance(it, dict) and "collection" in it for it in ch.get("content", [])):
@@ -266,19 +270,34 @@ async def channel_icon(number: int, body: dict):
     return {"ok": True, "mode": mode, "url": url}
 
 
-# The Add box asks "which items have this title?" on every add. Building the id index
-# scans all of Tunarr's libraries, so keep the last one for a few minutes.
+# Reading Tunarr's library is heavy: Tunarr builds every program of every library into one
+# answer (a big Plex TV library took ~50 s and ~2.5 GB of Tunarr's memory), and several at once
+# ran Tunarr out of memory. So one read serves the Add box, the editor's check, the channel list's
+# checks AND Save and Apply for a few minutes, and a read covers only the servers it's for.
 _INDEX_TTL_SECONDS = 300
-_index_cache = {"at": 0.0, "index": None}  # "index" holds (movie_map, show_map, id_index)
+_index_cache = {}   # frozenset of servers -> {"at": monotonic time, "index": (movie_map, show_map, id_index)}
 _index_lock = threading.Lock()
 
 
-def _cached_library(tunarr_url, refresh=False):
+def _saved_channel_servers():
+    cfg = _load_config()
+    return channel_engine.channel_servers(load().get("channels", []), cfg.get("plex_url", "").rstrip("/"),
+                                          cfg.get("plex_token", ""))
+
+
+def _cached_library(tunarr_url, refresh=False, servers=None):
+    """(movie_map, show_map, id_index) for `servers` (default: the servers the saved channels use),
+    read at most once every few minutes. A fresh read that covers more servers serves too."""
+    want = frozenset(servers or _saved_channel_servers() or ())
     with _index_lock:
-        stale = time.monotonic() - _index_cache["at"] > _INDEX_TTL_SECONDS
-        if refresh or stale or _index_cache["index"] is None:
-            _index_cache.update(at=time.monotonic(), index=channel_engine.build_library_index_with_ids(tunarr_url))
-        return _index_cache["index"]
+        now = time.monotonic()
+        if not refresh:
+            for key, entry in _index_cache.items():
+                if want <= key and now - entry["at"] <= _INDEX_TTL_SECONDS:
+                    return entry["index"]
+        index = channel_engine.build_library_index_with_ids(tunarr_url, set(want) or None)
+        _index_cache[want] = {"at": time.monotonic(), "index": index}
+        return index
 
 
 # The rule pick-lists read Plex's whole listing; keep it a few minutes so opening the Add
@@ -335,7 +354,8 @@ async def library_lookup(title: str, kind: str = "", refresh: bool = False, serv
         raise HTTPException(400, "Tunarr not configured")
     channel_engine.set_tunarr_auth_from_config(cfg)
     try:
-        _, _, index = await asyncio.to_thread(_cached_library, tunarr_url, refresh)
+        _, _, index = await asyncio.to_thread(
+            _cached_library, tunarr_url, refresh, {server} if server in channel_engine.SERVERS else None)
     except channel_engine.ChannelEngineError as e:
         raise HTTPException(502, str(e))
     if server in channel_engine.SERVERS:
@@ -367,7 +387,8 @@ def _review_channels(channels, tunarr_url, plex_url, plex_token, refresh=False, 
     exactly as a deploy would, but writing nothing and never touching Tunarr's channels.
     One cached library scan and one Plex collection lookup serve them all. With `isolate`, a
     channel that can't be checked is left out instead of failing the rest."""
-    movie_map, show_map, id_index = _cached_library(tunarr_url, refresh)
+    movie_map, show_map, id_index = _cached_library(
+        tunarr_url, refresh, servers=channel_engine.channel_servers(channels, plex_url, plex_token))
     uses_collection = any(isinstance(it, dict) and "collection" in it
                           for ch in channels for it in ch.get("content", []))
     plex_sections = (channel_engine.get_plex_sections(plex_url, plex_token)

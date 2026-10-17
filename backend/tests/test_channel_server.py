@@ -197,6 +197,109 @@ def test_the_add_box_lookup_only_offers_the_channels_servers_copies(both, monkey
     from routers import channels_router
     monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
     (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://t"}))
-    monkeypatch.setattr(channels_router, "_cached_library", lambda url, refresh=False: both)
+    monkeypatch.setattr(channels_router, "_cached_library", lambda url, refresh=False, servers=None: both)
     got = asyncio.run(channels_router.library_lookup("Aladdin", server="jellyfin"))
     assert [m["entry"]["ids"]["tunarr"] for m in got["matches"]] == ["j-aladdin"]
+
+
+# ── go easy on Tunarr: only the servers needed, one read at a time ────────────────────
+
+def _counting(monkeypatch, sources, programs, delay=0.0):
+    import threading, time
+    state = type("S", (), {"paths": [], "now": 0, "most": 0})()
+    lock = threading.Lock()
+    monkeypatch.setattr(channel_engine, "get_library_sources", lambda url: sources)
+    def api(url, method, path, body=None, timeout=60):
+        with lock:
+            state.now += 1
+            state.most = max(state.most, state.now)
+            state.paths.append(path)
+        time.sleep(delay)
+        with lock:
+            state.now -= 1
+        return next(v for k, v in programs.items() if path.endswith(f"/{k}/programs"))
+    monkeypatch.setattr(channel_engine, "api", api)
+    return state
+
+
+BOTH_SOURCES = [
+    {"name": "Plex", "type": "plex", "libraries": [{"id": "pm", "mediaType": "movies", "enabled": True}]},
+    {"name": "Jellyfin", "type": "jellyfin", "libraries": [{"id": "jm", "mediaType": "movies", "enabled": True}]},
+]
+BOTH_PROGRAMS = {"pm": [_prog("p-aladdin", "Aladdin", 1992, "plex", "S1", "812")],
+                 "jm": [_prog("j-aladdin", "Aladdin", 1992, "jellyfin", "S2", "812")]}
+
+
+def test_a_plex_channel_reads_only_tunarrs_plex_libraries(monkeypatch):
+    """Reading both servers' libraries for every save doubled the work and, with several reads at
+    once, ran the test Tunarr out of memory."""
+    state = _counting(monkeypatch, BOTH_SOURCES, BOTH_PROGRAMS)
+    channel_engine.build_library_index_with_ids("http://t", "plex")
+    assert state.paths == ["/api/media-libraries/pm/programs"]
+
+
+def test_a_read_for_both_kinds_of_channel_reads_both(monkeypatch):
+    state = _counting(monkeypatch, BOTH_SOURCES, BOTH_PROGRAMS)
+    channel_engine.build_library_index_with_ids("http://t", {"plex", "jellyfin"})
+    assert len(state.paths) == 2
+
+
+def test_a_server_tunarr_doesnt_have_falls_back_to_everything(monkeypatch):
+    """A Plex channel on a Jellyfin-only Tunarr still finds what Tunarr has, never nothing."""
+    state = _counting(monkeypatch, BOTH_SOURCES[1:], BOTH_PROGRAMS)
+    movie_map, _, _ = channel_engine.build_library_index_with_ids("http://t", "plex")
+    assert state.paths == ["/api/media-libraries/jm/programs"] and "aladdin" in movie_map
+
+
+def test_only_one_library_read_runs_at_a_time(monkeypatch, tmp_path):
+    import threading
+    monkeypatch.setenv("PROGRAMMARR_DATA", str(tmp_path))
+    state = _counting(monkeypatch, BOTH_SOURCES, BOTH_PROGRAMS, delay=0.05)
+    threads = [threading.Thread(target=channel_engine.build_library_index_with_ids, args=("http://t",)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(state.paths) == 8 and state.most == 1
+
+
+def test_which_servers_a_set_of_channels_needs():
+    assert channel_engine.channel_servers([{"server": "plex"}, {"server": "jellyfin"}, {}], "http://p", "x") == {"plex", "jellyfin"}
+
+
+def test_one_read_serves_the_editors_check_and_save_and_apply(monkeypatch, tmp_path):
+    """Opening a channel read the whole library, then Save and Apply read it all over again —
+    two ~50 s, multi-GB answers from Tunarr per edit. Now the save reuses the editor's read."""
+    from routers import channels_router
+    monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://t", **PLEX_CFG}))
+    (tmp_path / "channels.json").write_text(json.dumps({"channels": [{"number": 1, "server": "plex"}]}))
+    reads = []
+    monkeypatch.setattr(channel_engine, "build_library_index_with_ids",
+                        lambda url, servers=None: reads.append(servers) or ({}, {}, {"by_id": {}, "all": {}}))
+    channels_router._cached_library("http://t", servers={"plex"})      # the editor's check
+    channels_router._cached_library("http://t", servers={"plex"})      # Save and Apply
+    assert reads == [{"plex"}]
+
+
+def test_a_read_of_both_servers_serves_a_one_server_request(monkeypatch, tmp_path):
+    from routers import channels_router
+    monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
+    reads = []
+    monkeypatch.setattr(channel_engine, "build_library_index_with_ids",
+                        lambda url, servers=None: reads.append(servers) or ({}, {}, {}))
+    channels_router._cached_library("http://t", servers={"plex", "jellyfin"})
+    channels_router._cached_library("http://t", servers={"jellyfin"})
+    assert len(reads) == 1
+
+
+def test_the_channel_lists_check_reads_only_the_servers_the_channels_use(monkeypatch, tmp_path):
+    from routers import channels_router
+    monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://t", **PLEX_CFG, **JF_CFG}))
+    (tmp_path / "channels.json").write_text(json.dumps({"channels": [{"number": 1, "server": "plex"}]}))
+    reads = []
+    monkeypatch.setattr(channel_engine, "build_library_index_with_ids",
+                        lambda url, servers=None: reads.append(servers) or ({}, {}, {}))
+    channels_router._cached_library("http://t")
+    assert reads == [{"plex"}]

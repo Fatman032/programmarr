@@ -75,7 +75,7 @@ def test_two_library_copies_of_one_movie_are_one_match(monkeypatch):
 def server(tmp_path, monkeypatch):
     monkeypatch.setattr(channels_router, "DATA_DIR", tmp_path)
     (tmp_path / "config.json").write_text(json.dumps({"tunarr_url": "http://tunarr:8000"}))
-    monkeypatch.setattr(channels_router, "_index_cache", {"at": 0.0, "index": None})
+    monkeypatch.setattr(channels_router, "_index_cache", {})   # empty: the next read goes to Tunarr
     _library(monkeypatch, [("mv", "movies"), ("tv", "shows")],
              {"mv": [_movie("Aladdin", 1992, tmdb="812", plex="501", tunarr="a92"),
                      _movie("Aladdin", 2019, tmdb="420817", plex="502", tunarr="a19"),
@@ -83,7 +83,7 @@ def server(tmp_path, monkeypatch):
               "tv": [_episode("The Office", "office-us", 2005, tmdb="2316", plex="31", n=1)]})
     builds = []
     real = channel_engine.build_library_index_with_ids
-    monkeypatch.setattr(channel_engine, "build_library_index_with_ids", lambda url: builds.append(1) or real(url))
+    monkeypatch.setattr(channel_engine, "build_library_index_with_ids", lambda url, servers=None: builds.append(1) or real(url))
     return builds
 
 
@@ -136,8 +136,8 @@ def test_tunarr_not_configured_is_a_400(tmp_path, monkeypatch):
 
 
 def test_tunarr_down_is_a_502_so_the_box_can_fall_back_to_the_typed_text(server, monkeypatch):
-    monkeypatch.setattr(channels_router, "_index_cache", {"at": 0.0, "index": None})
-    def boom(url): raise channel_engine.ChannelEngineError("Tunarr unreachable")
+    monkeypatch.setattr(channels_router, "_index_cache", {})   # empty: the next read goes to Tunarr
+    def boom(url, servers=None): raise channel_engine.ChannelEngineError("Tunarr unreachable")
     monkeypatch.setattr(channel_engine, "build_library_index_with_ids", boom)
     with pytest.raises(HTTPException) as e:
         _lookup(title="Aladdin")

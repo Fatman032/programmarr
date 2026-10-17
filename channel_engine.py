@@ -12,7 +12,9 @@ No dependencies beyond the Python standard library.
 """
 
 import base64
+import contextlib
 import pathlib
+import threading
 import json
 import os
 import time
@@ -371,15 +373,65 @@ def find_by_plex_id(kind, plex_id, id_index):
     return found[0] if len(found) == 1 else None
 
 
-def _scan_tunarr_library(tunarr_url):
+# ── Go easy on Tunarr ──────────────────────────────────────────────────────────────
+# A library read asks Tunarr for EVERY program in each library in one answer, which Tunarr
+# builds in memory. Several of those at once — saving a channel while the Channels page checks
+# every channel and the auto-update runs, on a Tunarr holding both Plex and Jellyfin — ran
+# Tunarr out of memory and it restarted. So only one library read runs at a time across the
+# whole app (the web server and the deploy scripts it starts, via a lock file next to the data),
+# and a read asks only for the servers it needs.
+
+_READ_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _one_library_read_at_a_time():
+    with _READ_LOCK:
+        handle = None
+        try:
+            import fcntl   # not on Windows (development) — there the in-process lock is enough
+            path = pathlib.Path(os.environ.get("PROGRAMMARR_DATA", ".")) / ".library-read.lock"
+            handle = open(path, "a")
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            handle = None
+        try:
+            yield
+        finally:
+            if handle is not None:
+                handle.close()   # closing releases the lock
+
+
+def _wanted_servers(servers):
+    """None (every server) or a set of "plex" / "jellyfin" from a name or a list of names."""
+    if not servers:
+        return None
+    names = {servers} if isinstance(servers, str) else set(servers)
+    return {s for s in names if s in LIBRARY_SOURCE_TYPES} or None
+
+
+def _scan_tunarr_library(tunarr_url, servers=None):
     """One pass over every enabled library Tunarr has from a Plex or Jellyfin (beta) source —
     movies, TV shows, and "Other Videos" (family videos and the like). Builds the raw structures that
     build_library_index (titles only, the original contract) and
     build_library_index_with_ids (titles + ids) each shape into their own return, so a
-    library is fetched once whichever a caller uses."""
+    library is fetched once whichever a caller uses.
+
+    `servers` ("plex", "jellyfin", or a list): read only those sources' libraries — a channel only
+    ever plays from its own server. If Tunarr has none of them, every source is read instead."""
+    with _one_library_read_at_a_time():
+        return _scan_tunarr_library_locked(tunarr_url, servers)
+
+
+def _scan_tunarr_library_locked(tunarr_url, servers):
     plex_sources = get_library_sources(tunarr_url)
     if not plex_sources:
         raise _no_plex_source_error(tunarr_url)
+    wanted = _wanted_servers(servers)
+    if wanted:
+        picked = [s for s in plex_sources if s.get("type") in wanted]
+        if picked:
+            plex_sources = picked
 
     movie_map = {}
     movie_items = []      # every movie / other video, one entry each — never merged by title
@@ -498,9 +550,9 @@ def _collapse_show_map(tv_candidates):
     return show_map
 
 
-def build_library_index(tunarr_url):
+def build_library_index(tunarr_url, servers=None):
     movie_map, _movie_items, tv_candidates, _show_items, failed_libs, attempted_libs = \
-        _scan_tunarr_library(tunarr_url)
+        _scan_tunarr_library(tunarr_url, servers)
     _check_failed_libs(failed_libs, attempted_libs)
     print(f"  Indexed {len(movie_map)} movies")
     show_map = _collapse_show_map(tv_candidates)
@@ -508,11 +560,11 @@ def build_library_index(tunarr_url):
     return movie_map, show_map
 
 
-def build_library_index_with_ids(tunarr_url):
+def build_library_index_with_ids(tunarr_url, servers=None):
     """Like build_library_index, plus the id index (see the note above) built from the
-    same scan. Returns (movie_map, show_map, id_index)."""
+    same scan. Returns (movie_map, show_map, id_index). `servers`: only those servers' libraries."""
     movie_map, movie_items, tv_candidates, show_items, failed_libs, attempted_libs = \
-        _scan_tunarr_library(tunarr_url)
+        _scan_tunarr_library(tunarr_url, servers)
     _check_failed_libs(failed_libs, attempted_libs)
     print(f"  Indexed {len(movie_map)} movies")
     show_map = _collapse_show_map(tv_candidates)
@@ -544,6 +596,11 @@ def tag_channels(channels, server):
             ch["server"] = server
             changed += 1
     return changed
+
+
+def channel_servers(channels, plex_url=None, token=None):
+    """The set of servers these channels play from — what a library read for them needs."""
+    return {channel_server(ch, plex_url, token) for ch in channels or []}
 
 
 def channel_server(ch, plex_url=None, token=None):

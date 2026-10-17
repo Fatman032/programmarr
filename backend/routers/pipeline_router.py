@@ -2559,8 +2559,9 @@ async def run_surgical_deploy():
             # regardless of how many channels need updating (Fix 3 — efficiency).
             if diff["update"]:
                 library_index = await asyncio.to_thread(
-                    channel_engine.build_library_index_with_ids, tunarr_url
-                )
+                    channel_engine.build_library_index_with_ids, tunarr_url,
+                    channel_engine.channel_servers([it["desired"] for it in diff["update"]], plex_url, plex_token),
+                )   # only the servers these channels play from
                 movie_map_shared, show_map_shared, id_index_shared = library_index
             else:
                 movie_map_shared, show_map_shared, id_index_shared = {}, {}, None

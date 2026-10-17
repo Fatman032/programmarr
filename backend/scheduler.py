@@ -229,7 +229,8 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
         return summary
 
     try:
-        movie_map, show_map, id_index = channel_engine.build_library_index_with_ids(tunarr_url)
+        movie_map, show_map, id_index = channel_engine.build_library_index_with_ids(
+            tunarr_url, channel_engine.channel_servers(live, plex_url, plex_token))
     except channel_engine.ChannelEngineError as e:
         summary["error"] = f"library index failed: {e}"
         return summary

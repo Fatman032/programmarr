@@ -77,6 +77,14 @@ All notable changes to Programmarr are documented here. This project follows
   and the channel list and editor show each channel's server; the editor's Add box, pick-lists and
   "which one?" lookups use the channel's server. With one server set up nothing new is shown.
   Where you WATCH is separate: every channel still shows up in both Plex and Jellyfin Live TV.
+- **Programmarr goes easy on Tunarr.** Reading Tunarr's library makes Tunarr build every program of
+  every library into one answer — a big Plex TV library took ~50 s and ~2.5 GB of Tunarr's memory —
+  and on a Tunarr holding both Plex and Jellyfin, a save that overlapped the channel list's checks ran
+  Tunarr out of memory and it restarted. Now a read asks only for the servers it's for (a Plex
+  channel reads only Tunarr's Plex libraries), only one read runs at a time across the app (the web
+  server, the auto-update and deploys), and Save and Apply reuses the read the editor did when it
+  opened (kept 5 minutes) instead of reading everything again — a save takes seconds, not a minute.
+  Something added to the library in those few minutes joins at the next refresh.
 - **A Jellyfin collection no longer hides its movies from Export/Scan.** Jellyfin lists a collection in
   place of its members unless asked not to, so once a "Fish" collection existed the export lost its
   10 movies and reported "Fish" as a movie not in Tunarr. It now asks for every movie and show
