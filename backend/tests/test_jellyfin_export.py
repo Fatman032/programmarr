@@ -251,23 +251,49 @@ def test_the_picker_explains_an_unreadable_jellyfin(picker, monkeypatch):
 BOTH = {**JF_CONFIG, "plex_url": "http://friend:32400", "plex_token": "x"}
 
 
-def test_with_both_servers_the_export_reads_both(tmp_path, monkeypatch, jellyfin, tunarr):
+def _plex_has(monkeypatch, *titles):
     def fake_plex_get(base_url, token, path, timeout=60):
         if path == "/library/sections":
             return {"MediaContainer": {"Directory": [{"key": "1", "title": "Plex Movies", "type": "movie"}]}}
         if path.startswith("/library/sections/1/all"):
-            return {"MediaContainer": {"Metadata": [
-                {"title": "Plex Only Movie", "year": 2000, "Genre": [{"tag": "Drama"}]},
-                {"title": "Heat", "year": 1995, "Genre": [{"tag": "Thriller"}]}]}}
+            return {"MediaContainer": {"Metadata": [{"title": t, "year": 2000, "Genre": [{"tag": "Drama"}]} for t in titles]}}
         return None
     monkeypatch.setattr(export, "plex_get", fake_plex_get)
-    monkeypatch.setitem(TUNARR_PROGRAMS, "tm", TUNARR_PROGRAMS["tm"] + [{"program": {"title": "Plex Only Movie"}}])
+
+
+def test_with_both_servers_a_scan_reads_one_plex_by_default(tmp_path, monkeypatch, jellyfin, tunarr):
+    """A scan never mixes Plex and Jellyfin: channels play from one server each."""
+    _plex_has(monkeypatch, "Plex Only Movie")
     rows = _run_export(tmp_path, monkeypatch, BOTH)
-    assert rows["Plex Only Movie"]["Source"] == "Plex"      # from Plex
-    assert rows["Aladdin"]["Source"] == "Jellyfin"          # from Jellyfin
-    assert rows["Cheers"]["Source"] == "Jellyfin"
-    # On both servers: listed once, from the first server read (Plex), like two Plex servers today.
-    assert rows["Heat"]["Source"] == "Plex" and rows["Heat"]["Genres"] == "Thriller"
+    assert "Plex Only Movie" in rows
+    assert "Aladdin" not in rows and "Cheers" not in rows          # Jellyfin's, not read
+    assert json.loads((tmp_path / "export_summary.json").read_text())["server"] == "plex"
+
+
+def test_with_both_servers_a_jellyfin_scan_reads_only_jellyfin(tmp_path, monkeypatch, jellyfin, tunarr):
+    _plex_has(monkeypatch, "Plex Only Movie")
+    rows = _run_export(tmp_path, monkeypatch, BOTH, "--server", "jellyfin")
+    assert "Plex Only Movie" not in rows
+    assert "Aladdin" in rows and "Cheers" in rows
+    assert json.loads((tmp_path / "export_summary.json").read_text())["server"] == "jellyfin"
+
+
+def test_a_plex_title_isnt_in_tunarr_just_because_jellyfins_copy_is(tmp_path, monkeypatch, jellyfin, tunarr):
+    """The "is it in Tunarr?" check looks at the scanned server's copies only."""
+    _plex_has(monkeypatch, "Heat", "Synced In Plex")
+    plex_source = {"type": "plex", "name": "Plex", "uri": "http://friend:32400", "libraries": [
+        {"id": "pm", "name": "Movies", "mediaType": "movies", "enabled": True}]}
+    monkeypatch.setattr(sys.modules[__name__], "TUNARR_SOURCES", TUNARR_SOURCES + [plex_source])
+    monkeypatch.setitem(TUNARR_PROGRAMS, "pm", [{"program": {"title": "Synced In Plex"}}])
+    rows = _run_export(tmp_path, monkeypatch, BOTH, "--server", "plex")
+    assert "Synced In Plex" in rows
+    assert "Heat" not in rows   # only Jellyfin's copy is in Tunarr — not synced for a Plex channel
+
+
+def test_scanning_a_server_that_isnt_set_up_says_so(tmp_path, monkeypatch, jellyfin, tunarr, capsys):
+    with pytest.raises(SystemExit):
+        _run_export(tmp_path, monkeypatch, JF_CONFIG, "--server", "plex")
+    assert "Plex isn't set up" in capsys.readouterr().out
 
 
 def test_with_both_servers_the_picker_lists_both(picker, monkeypatch):

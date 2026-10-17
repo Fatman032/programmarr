@@ -67,15 +67,28 @@ def _get_plex_servers(cfg):
     return [("Plex", cfg["plex_url"].rstrip("/"), cfg["plex_token"])]
 
 
-def _get_servers(cfg):
-    """(kind, name, url, key) for every connected media server: the Plex server(s) + token(s)
-    and/or the Jellyfin server + API key — whichever are set up."""
+def _get_servers(cfg, server=None):
+    """(kind, name, url, key) for the connected media server(s) of one kind: the Plex server(s) +
+    token(s), or the Jellyfin server + API key. A scan reads ONE kind of server — channels play from
+    one server each, so a scan never mixes Plex and Jellyfin. `server` None: every connected one."""
     servers = []
-    if _has_plex(cfg):
+    if _has_plex(cfg) and server in (None, "plex"):
         servers += [("plex", name, url, token) for name, url, token in _get_plex_servers(cfg)]
-    if _has_jellyfin(cfg):
+    if _has_jellyfin(cfg) and server in (None, "jellyfin"):
         servers.append(("jellyfin", "Jellyfin", cfg["jellyfin_url"].rstrip("/"), cfg["jellyfin_api_key"]))
     return servers
+
+
+def scan_server(cfg, wanted=None):
+    """Which server this scan reads: the one asked for, else Plex when it's set up, else Jellyfin.
+    Exits with a clear message when the one asked for isn't set up."""
+    if wanted:
+        if not (_has_plex(cfg) if wanted == "plex" else _has_jellyfin(cfg)):
+            name = "Plex" if wanted == "plex" else "Jellyfin"
+            print(f"ERROR: {name} isn't set up — add it in Settings -> Connections, or scan the other server.")
+            sys.exit(1)
+        return wanted
+    return "plex" if _has_plex(cfg) else "jellyfin"
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
@@ -137,10 +150,13 @@ def fetch_plex_shows(plex_url, token, section_key):
 
 # ── Tunarr cross-reference ─────────────────────────────────────────────────────
 
-def build_tunarr_title_sets(tunarr_url):
+def build_tunarr_title_sets(tunarr_url, server=None):
+    """Titles Tunarr has synced — from `server`'s source only (a Plex title isn't "in Tunarr" just
+    because Tunarr has Jellyfin's copy), or every Plex / Jellyfin source when None."""
     print("  Fetching Tunarr library for cross-reference...")
     sources = tunarr_get(tunarr_url, "/api/media-sources") or []
-    plex_sources = [s for s in sources if s.get("type") in channel_engine.LIBRARY_SOURCE_TYPES]
+    plex_sources = [s for s in sources if s.get("type") in channel_engine.LIBRARY_SOURCE_TYPES
+                    and server in (None, s.get("type"))]
     if not plex_sources:
         print("  WARNING: No Plex or Jellyfin source in Tunarr — skipping cross-reference")
         return None, None
@@ -222,11 +238,12 @@ def tunarr_show_to_row(show_title, episodes, source_name):
 
 
 def build_extra_rows_from_tunarr(tunarr_url, seen_movie_titles, seen_show_titles,
-                                  allowed_movie_libs=None, allowed_tv_libs=None):
+                                  allowed_movie_libs=None, allowed_tv_libs=None, server=None):
     """Fetch content from all Tunarr sources, skipping titles already in the primary export.
 
     allowed_movie_libs / allowed_tv_libs: set of Tunarr library UUIDs to include.
     None = include all (CLI default). Empty set = skip entirely.
+    server: the server this scan is for — the OTHER media server's sources are never added.
     """
     print("  Fetching additional content from other Tunarr sources...")
     sources = tunarr_get(tunarr_url, "/api/media-sources") or []
@@ -237,6 +254,8 @@ def build_extra_rows_from_tunarr(tunarr_url, seen_movie_titles, seen_show_titles
     extra_show_rows  = []
 
     for source in sources:
+        if server and source.get("type") in channel_engine.LIBRARY_SOURCE_TYPES and source.get("type") != server:
+            continue   # the other media server: a scan reads one server
         source_name = source.get("name", source.get("type", "Tunarr"))
         libs = source.get("libraries", [])
         movie_libs = [l for l in libs if l.get("mediaType") in ("movie", "movies") and l.get("enabled")]
@@ -436,6 +455,8 @@ def main():
     parser = argparse.ArgumentParser(description="Export your Plex or Jellyfin (beta) library to CSV")
     parser.add_argument("--out", default=OUTPUT_FILE, help="Output CSV path")
     parser.add_argument("--no-crossref", action="store_true", help="Skip Tunarr sync check")
+    parser.add_argument("--server", choices=("plex", "jellyfin"), default=None,
+                        help="Which server to scan (one per scan; default: Plex if set up, else Jellyfin)")
     parser.add_argument("--movie-sections", default=None,
                         help="Comma-separated movie library keys — Plex section keys or Jellyfin library ids "
                              "(auto-detect if omitted, empty = skip).")
@@ -450,7 +471,8 @@ def main():
 
     cfg = load_config()
     tunarr_url = cfg["tunarr_url"].rstrip("/")
-    server_list = _get_servers(cfg)
+    server = scan_server(cfg, args.server)
+    server_list = _get_servers(cfg, server)
     kinds = {kind for kind, *_ in server_list}
     label = " and ".join(k for k in ("Plex", "Jellyfin") if k.lower() in kinds)
     multi = len(server_list) > 1
@@ -515,6 +537,7 @@ def main():
         tunarr_url, seen_movie_titles, seen_show_titles,
         allowed_movie_libs=allowed_movie_libs,
         allowed_tv_libs=allowed_tv_libs,
+        server=server,
     )
 
     # ── Cross-reference with Tunarr ────────────────────────────────────────────
@@ -523,7 +546,7 @@ def main():
 
     if not args.no_crossref:
         print("\n[3/4] Cross-referencing with Tunarr...")
-        tunarr_movies, tunarr_shows = build_tunarr_title_sets(tunarr_url)
+        tunarr_movies, tunarr_shows = build_tunarr_title_sets(tunarr_url, server)
     else:
         print("\n[3/4] Skipping Tunarr cross-reference (--no-crossref)")
 
@@ -585,6 +608,7 @@ def main():
             "tv_shows": shows_written,
             "skipped_movies": len(skipped_movies),
             "skipped_shows": len(skipped_shows),
+            "server": server,   # the one server this scan read
         }, f)
 
 

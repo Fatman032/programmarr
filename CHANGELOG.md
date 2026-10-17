@@ -26,7 +26,8 @@ All notable changes to Programmarr are documented here. This project follows
   sections (fill in either or both; the key is hidden like the Plex token), and the Dashboard shows a
   card for each server you've set up. Plex-only setups are unchanged. Stored as `jellyfin_url` and
   `jellyfin_api_key` in config.json.
-- **Export/Scan and the library picker read Jellyfin (BETA)** — and both servers, when you use both — the
+- **Export/Scan and the library picker read Jellyfin (BETA)** — one server per scan (the one picked in
+  Build Channels when both are set up; never both at once, so a scan never mixes them) — the
   same four steps as with Plex: list each server's movie and TV libraries, read every movie and show with the same details (genres, studios,
   director, top-billed cast, rating, country, seasons and episodes), keep what Tunarr has synced, and
   add what only Tunarr has. The CSV and the Planner work as before. Jellyfin has no Mood/Style tags, so
@@ -86,6 +87,10 @@ All notable changes to Programmarr are documented here. This project follows
   server, the auto-update and deploys), and Save and Apply reuses the read the editor did when it
   opened (kept 5 minutes) instead of reading everything again — a save takes seconds, not a minute.
   Something added to the library in those few minutes joins at the next refresh.
+- **A scan reads ONE server.** With Plex and Jellyfin both set up, Export/Scan reads only the server
+  picked in Build Channels (`--server plex|jellyfin` on the command line, Plex by default) — its
+  libraries, its "is it in Tunarr?" check (a Plex title doesn't count as synced because Tunarr has
+  Jellyfin's copy) and its extra titles from Tunarr. The scan summary records which server it read.
 - **A Jellyfin collection no longer hides its movies from Export/Scan.** Jellyfin lists a collection in
   place of its members unless asked not to, so once a "Fish" collection existed the export lost its
   10 movies and reported "Fish" as a movie not in Tunarr. It now asks for every movie and show

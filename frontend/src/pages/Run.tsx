@@ -466,6 +466,7 @@ function ExportStep({ onDone, server }: { onDone: () => void; server: 'plex' | '
       const code = await streamPipeline('/pipeline/export', {}, (ev: StreamEvent) => {
         if (ev.type === 'line') setLines(l => [...l, ev.text]);
       }, {
+        server,   // the ONE server this scan reads — never both
         no_crossref: noCrossref,
         movie_sections: movieSections,
         tv_sections: tvSections,

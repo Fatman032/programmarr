@@ -186,6 +186,7 @@ class ExportOptions(BaseModel):
     tv_sections: Optional[list[str]] = None
     tunarr_movie_libs: Optional[list[str]] = None  # Tunarr library UUIDs for extra sources
     tunarr_tv_libs: Optional[list[str]] = None
+    server: str = ""   # "plex" / "jellyfin": the ONE server this scan reads (Build Channels' choice)
 
 
 @router.get("/pipeline/libraries")
@@ -289,6 +290,8 @@ async def run_export(opts: ExportOptions = ExportOptions()):
         args += ["--tunarr-movie-libs", ",".join(opts.tunarr_movie_libs)]
     if opts.tunarr_tv_libs is not None:
         args += ["--tunarr-tv-libs", ",".join(opts.tunarr_tv_libs)]
+    if opts.server in channel_engine.SERVERS:
+        args += ["--server", opts.server]
     return _sse(_stream("export.py", args, "export"))
 
 
@@ -340,6 +343,7 @@ def csv_info():
                 s = json.load(f)
                 result["skipped_movies"] = s.get("skipped_movies", 0)
                 result["skipped_shows"] = s.get("skipped_shows", 0)
+                result["server"] = s.get("server")   # which server the last scan read
         except Exception:
             pass
     return result
