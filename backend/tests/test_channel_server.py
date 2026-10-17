@@ -4,7 +4,8 @@ A Tunarr with both Plex and Jellyfin holds the same movie twice. Each channel is
 ONE server its content plays from and only that server's copies are used, so a channel never
 mixes the two. Every channel is tagged when it's made (even with one server set up), so someone
 who adds a second server later still knows where each channel came from. Channels saved before the
-tag existed are tagged by what's set up: only Plex -> Plex, only Jellyfin -> Jellyfin, both -> Plex.
+tag existed (an upgrade) are all Plex — no earlier version could use Jellyfin. A fresh install has
+no channels; each is tagged when made, with the server it's for (by itself, the one set up).
 """
 
 import json
@@ -48,12 +49,22 @@ def test_a_draft_follows_its_build_channels_choice():
     assert data["channels"][0]["server"] == "jellyfin"
 
 
-def test_startup_tags_the_saved_files_once(tmp_path):
+@pytest.mark.parametrize("cfg", [PLEX_CFG, JF_CFG, {**PLEX_CFG, **JF_CFG}, {}])
+def test_upgrading_tags_every_old_channel_plex(tmp_path, cfg):
+    """Scenario 1: an upgrade from a version before tags. Whatever is set up now, those channels
+    were made from Plex — no earlier version could use Jellyfin."""
     (tmp_path / "channels.json").write_text(json.dumps({"channels": [{"number": 1, "name": "A"}]}))
-    (tmp_path / "channels.draft.json").write_text(json.dumps({"channels": [{"number": 2, "server": "plex"}]}))
-    assert channel_tags.tag_files(tmp_path, JF_CFG) == 1
-    assert json.loads((tmp_path / "channels.json").read_text())["channels"][0] == {"number": 1, "name": "A", "server": "jellyfin"}
-    assert channel_tags.tag_files(tmp_path, JF_CFG) == 0   # already done
+    (tmp_path / "channels.draft.json").write_text(json.dumps({"channels": [{"number": 2, "server": "jellyfin"}]}))
+    assert channel_tags.tag_files(tmp_path, cfg) == 1
+    assert json.loads((tmp_path / "channels.json").read_text())["channels"][0] == {"number": 1, "name": "A", "server": "plex"}
+    assert json.loads((tmp_path / "channels.draft.json").read_text())["channels"][0]["server"] == "jellyfin"
+    assert channel_tags.tag_files(tmp_path, cfg) == 0   # once
+
+
+def test_a_fresh_install_has_nothing_to_tag(tmp_path):
+    """Scenario 2: no channels yet; each is tagged when it's made."""
+    assert channel_tags.tag_files(tmp_path, JF_CFG) == 0
+    assert not (tmp_path / "channels.json").exists()
 
 
 def test_startup_tagging_survives_missing_or_broken_files(tmp_path):
@@ -62,7 +73,7 @@ def test_startup_tagging_survives_missing_or_broken_files(tmp_path):
 
 
 def test_someone_who_adds_jellyfin_later_keeps_their_plex_channels(tmp_path):
-    """Tagged while only Plex was set up; adding Jellyfin changes nothing about them."""
+    """Scenario 3: tagged when they upgraded; adding Jellyfin later changes nothing about them."""
     (tmp_path / "channels.json").write_text(json.dumps({"channels": [{"number": 1}]}))
     channel_tags.tag_files(tmp_path, PLEX_CFG)
     channel_tags.tag_files(tmp_path, {**PLEX_CFG, **JF_CFG})

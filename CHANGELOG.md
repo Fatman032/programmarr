@@ -70,9 +70,9 @@ All notable changes to Programmarr are documented here. This project follows
   and a channel used to pick a copy from either. Now every channel is tagged with the ONE server its
   content plays from, and only that server's copies, rules and collections are used for it — a
   channel never mixes the two. The tag is set when a channel is made, even with only one server set
-  up, so adding the other server later changes nothing about existing channels. Channels saved
-  before this are tagged once at startup: only Plex -> Plex, only Jellyfin -> Jellyfin, both -> Plex
-  (every earlier version could only use Plex). With both servers set up, Build Channels asks which
+  up, so adding the other server later changes nothing about existing channels. Upgrading: every
+  channel saved before this is tagged Plex at the first start (no earlier version could use
+  Jellyfin). A fresh install has no channels to tag. With both servers set up, Build Channels asks which
   server the new channels are for (the library scan, Planner and collections then use only that one),
   and the channel list and editor show each channel's server; the editor's Add box, pick-lists and
   "which one?" lookups use the channel's server. With one server set up nothing new is shown.
