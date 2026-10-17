@@ -16,7 +16,7 @@ import {
   api, buildCommercials, streamPipeline, StreamEvent, PlexCollection, PlexLibrary, CollectionSelection,
   LibraryFacets, CandidateSpec, CandidateKind, EntityFacet, GenreDecadeFacet, BlendFacet, ValidateResult,
   FillerList, Commercials, TvMovieGenreFacet, PlannerStateFile, ProgrammingBlock,
-  FranchiseCandidate, DeployPreviewResult, ThemeFacet,
+  FranchiseCandidate, DeployPreviewChannel, DeployPreviewResult, ThemeFacet,
 } from '../api/client';
 import TerminalOutput from '../components/TerminalOutput';
 import { useMediaServers } from '../api/mediaServer';
@@ -2166,7 +2166,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
     label, channels, color, symbol,
   }: {
     label: string;
-    channels: DeployPreviewResult[keyof DeployPreviewResult];
+    channels: DeployPreviewChannel[];
     color: string;
     symbol: string;
   }) {
