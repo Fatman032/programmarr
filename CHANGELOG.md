@@ -69,7 +69,8 @@ All notable changes to Programmarr are documented here. This project follows
 - **One server per channel (BETA).** A Tunarr with both Plex and Jellyfin holds the same movie twice,
   and a channel used to pick a copy from either. Now every channel is tagged with the ONE server its
   content plays from, and only that server's copies, rules and collections are used for it — a
-  channel never mixes the two. The tag is set when a channel is made, even with only one server set
+  channel never mixes the two, and never borrows the other server's copies: if Tunarr has none of
+  its server, Save and Apply says so ("add your Plex server to Tunarr") and leaves the channel as it is. The tag is set when a channel is made, even with only one server set
   up, so adding the other server later changes nothing about existing channels. Upgrading: every
   channel saved before this is tagged Plex at the first start (no earlier version could use
   Jellyfin). A fresh install has no channels to tag. With both servers set up, Build Channels asks which

@@ -418,7 +418,8 @@ def _scan_tunarr_library(tunarr_url, servers=None):
     library is fetched once whichever a caller uses.
 
     `servers` ("plex", "jellyfin", or a list): read only those sources' libraries — a channel only
-    ever plays from its own server. If Tunarr has none of them, every source is read instead."""
+    ever plays from its own server, never another's copies. If Tunarr has none of them, that's an
+    error saying so (add that server to Tunarr), not a read of something else."""
     with _one_library_read_at_a_time():
         return _scan_tunarr_library_locked(tunarr_url, servers)
 
@@ -429,9 +430,13 @@ def _scan_tunarr_library_locked(tunarr_url, servers):
         raise _no_plex_source_error(tunarr_url)
     wanted = _wanted_servers(servers)
     if wanted:
-        picked = [s for s in plex_sources if s.get("type") in wanted]
-        if picked:
-            plex_sources = picked
+        # (a source that doesn't say which server it is can't be ruled out, so it's kept)
+        plex_sources = [s for s in plex_sources if s.get("type") in wanted or not s.get("type")]
+        if not plex_sources:
+            names = " or ".join(_SERVER_NAMES[s] for s in sorted(wanted))
+            raise ChannelEngineError(
+                f"Tunarr has no {names} library — add your {names} server to Tunarr as a media source. "
+                f"These channels play only from {names}.")
 
     movie_map = {}
     movie_items = []      # every movie / other video, one entry each — never merged by title
@@ -612,8 +617,9 @@ def channel_server(ch, plex_url=None, token=None):
 
 def library_for_server(movie_map, show_map, id_index, server):
     """(movie_map, show_map, id_index) limited to the copies Tunarr plays from `server`.
-    Unchanged when Tunarr holds only one server's copies (the usual case), when `server` has
-    none there at all, or when the index doesn't know where its copies come from."""
+    Unchanged when every copy is that server's (the usual case) or the index doesn't know where
+    its copies come from; EMPTY when Tunarr has none of that server's copies — a channel never
+    borrows another server's."""
     scan = (id_index or {}).get("_scan")
     if not server or not scan:
         return movie_map, show_map, id_index
@@ -622,8 +628,9 @@ def library_for_server(movie_map, show_map, id_index, server):
         return cached[server]
     movie_items, tv_candidates, show_items = scan
     present = {it.get("server") for it in movie_items + show_items}
-    if len(present) <= 1 or server not in present:
-        return movie_map, show_map, id_index   # nothing to narrow (never cached: callers pass their own maps)
+    if present <= {server} or None in present:
+        # Nothing to narrow, or copies whose server isn't known (never cached: callers pass their own maps)
+        return movie_map, show_map, id_index
     m_items = [it for it in movie_items if it.get("server") == server]
     s_items = [it for it in show_items if it.get("server") == server]
     m_map = {}

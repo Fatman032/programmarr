@@ -149,14 +149,15 @@ def test_something_only_the_other_server_has_is_not_borrowed(both):
     assert _played(["Antz"], both, "jellyfin") == ["j-antz"]
 
 
-def test_a_tunarr_with_one_server_is_unaffected(monkeypatch):
+def test_a_plex_channel_never_borrows_jellyfins_copies(monkeypatch):
+    """Tunarr has only Jellyfin: a Plex channel finds nothing (the deploy then leaves it as it is)
+    — it never plays another server's copies."""
     sources = [{"name": "Jellyfin", "type": "jellyfin", "libraries": [{"id": "jm", "mediaType": "movies", "enabled": True}]}]
     monkeypatch.setattr(channel_engine, "get_library_sources", lambda url: sources)
     monkeypatch.setattr(channel_engine, "api", lambda *a, **k: [_prog("j-antz", "Antz", 1998, "jellyfin", "S2", "8916")])
     movie_map, show_map, idx = channel_engine.build_library_index_with_ids("http://t")
-    # A channel tagged Plex on a Jellyfin-only Tunarr still finds what Tunarr has, not nothing.
-    resolved, _ = channel_engine.resolve_content(["Antz"], movie_map, show_map, id_index=idx, server="plex")
-    assert len(resolved) == 1
+    assert channel_engine.resolve_content(["Antz"], movie_map, show_map, id_index=idx, server="plex")[0] == []
+    assert len(channel_engine.resolve_content(["Antz"], movie_map, show_map, id_index=idx, server="jellyfin")[0]) == 1
 
 
 def test_a_channels_rules_ask_its_server(both, monkeypatch):
@@ -244,11 +245,13 @@ def test_a_read_for_both_kinds_of_channel_reads_both(monkeypatch):
     assert len(state.paths) == 2
 
 
-def test_a_server_tunarr_doesnt_have_falls_back_to_everything(monkeypatch):
-    """A Plex channel on a Jellyfin-only Tunarr still finds what Tunarr has, never nothing."""
+def test_reading_for_a_server_tunarr_doesnt_have_says_so(monkeypatch):
+    """A Plex channel on a Tunarr with no Plex: a clear error (add Plex to Tunarr), and Jellyfin's
+    libraries aren't read in its place."""
     state = _counting(monkeypatch, BOTH_SOURCES[1:], BOTH_PROGRAMS)
-    movie_map, _, _ = channel_engine.build_library_index_with_ids("http://t", "plex")
-    assert state.paths == ["/api/media-libraries/jm/programs"] and "aladdin" in movie_map
+    with pytest.raises(channel_engine.ChannelEngineError) as e:
+        channel_engine.build_library_index_with_ids("http://t", "plex")
+    assert "Tunarr has no Plex library" in str(e.value) and state.paths == []
 
 
 def test_only_one_library_read_runs_at_a_time(monkeypatch, tmp_path):
