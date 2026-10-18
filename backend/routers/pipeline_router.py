@@ -2544,11 +2544,32 @@ def deploy_preview(req: DeployPreviewRequest = DeployPreviewRequest()):
         for item in diff["update"]
     ]
 
+    # Existing channels keep their REAL number (the draft renumbers them from the start number while
+    # composing; the deploy maps them back) — so show that one, as for updates.
+    deployed_by_name = {(ch.get("name") or "").strip().lower(): ch for ch in deployed}
+    unchanged_items = [
+        {"number": deployed_by_name.get((ch.get("name") or "").strip().lower(), ch).get("number"), "name": ch.get("name", "")}
+        for ch in diff["unchanged"]
+    ]
+    # A new channel keeps its draft number (it may be one the person chose, e.g. in the Collections
+    # step) unless that number is already a channel (either server's, or hand-made) or taken by
+    # another new channel — then it's offered the next free number after every channel there is.
+    used = {ch.get("number") for ch in deployed + other_server + diff["foreign"] if isinstance(ch.get("number"), int)}
+    next_free = max(used, default=0) + 1
+    create_items = []
+    for ch in diff["create"]:
+        n = ch.get("number")
+        if not isinstance(n, int) or n < 1 or n in used:
+            while next_free in used:
+                next_free += 1
+            n = next_free
+        create_items.append({"number": n, "name": ch.get("name", "")})
+        used.add(n)
     return {
-        "create": [_entry(ch) for ch in diff["create"]],
+        "create": create_items,
         "update": update_items,
         "delete": [_entry(ch) for ch in diff["delete"]],
-        "unchanged": [_entry(ch) for ch in diff["unchanged"]],
+        "unchanged": unchanged_items,
         "foreign": [_entry(ch) for ch in diff["foreign"]],
         "other_server": [_entry(ch) for ch in other_server],   # untouched: the other server's channels
     }

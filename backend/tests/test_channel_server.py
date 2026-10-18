@@ -423,3 +423,23 @@ def test_a_clashing_number_is_refused_before_anything_is_created(run_both, monke
     with pytest.raises(HTTPException) as e:
         asyncio.run(run_both.run_surgical_deploy(run_both.SurgicalDeployRequest(numbers={"Brand New": 4})))
     assert e.value.status_code == 409 and "#4 ('Brand New') is already a channel in Tunarr" in e.value.detail
+
+
+def test_the_preview_shows_existing_channels_real_numbers(run_both):
+    """The real case: channels on #1 and #2 showed as #9 and #10 — the draft's numbers. A new
+    channel keeps its free draft number (it may be one the person chose)."""
+    _draft(run_both, "plex", [{"number": 9, "name": "2020s Comedy", "server": "plex", "content": ["A"]},
+                              {"number": 10, "name": "Old Plex Pick", "server": "plex", "content": ["B"]},
+                              {"number": 13, "name": "Paramount Pictures", "server": "plex", "content": ["C"]}])
+    got = run_both.deploy_preview(run_both.DeployPreviewRequest(mode="edit"))
+    assert [(c["number"], c["name"]) for c in got["unchanged"]] == [(1, "2020s Comedy"), (2, "Old Plex Pick")]
+    assert got["create"] == [{"number": 13, "name": "Paramount Pictures"}]
+
+
+def test_a_new_channels_number_that_is_taken_is_offered_the_next_free_one(run_both):
+    """Even the other server's channels count as taken."""
+    _draft(run_both, "jellyfin", [{"number": 1, "name": "Fish", "server": "jellyfin", "content": ["X"]},
+                                  {"number": 2, "name": "Docs", "server": "jellyfin", "content": ["Y"]},
+                                  {"number": 7, "name": "Seven", "server": "jellyfin", "content": ["Z"]}])
+    got = run_both.deploy_preview(run_both.DeployPreviewRequest(mode="edit"))
+    assert [c["number"] for c in got["create"]] == [3, 4, 7]   # #1/#2 are the Plex channels; #7 is free

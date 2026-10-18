@@ -103,6 +103,10 @@ All notable changes to Programmarr are documented here. This project follows
   list has a number box per channel, prefilled with the automatic number — like the full rebuild's.
   A number already used by any channel in Tunarr (either server's, or hand-made), or picked twice, is
   flagged and Apply Changes waits until it's fixed; the deploy checks Tunarr again before creating.
+- **The Add/update preview shows existing channels' real numbers.** "Unchanged" channels were listed
+  under the draft's numbers (the Planner numbers everything from the start number while composing;
+  the deploy maps existing channels back), so #1 showed as #9. A new channel whose draft number is
+  already taken is offered the next free one.
 - **A scan reads ONE server.** With Plex and Jellyfin both set up, Export/Scan reads only the server
   picked in Build Channels (`--server plex|jellyfin` on the command line, Plex by default) — its
   libraries, its "is it in Tunarr?" check (a Plex title doesn't count as synced because Tunarr has
