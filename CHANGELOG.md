@@ -4,7 +4,7 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased] — 1.2.0 beta (Jellyfin support is BETA)
+## [1.2.0-beta.1] — 2026-10-18 (my build, BETA — Jellyfin support is beta; being tested)
 
 ### Added
 
@@ -134,7 +134,13 @@ All notable changes to Programmarr are documented here. This project follows
 
 - Existing saved entries (TMDB / Plex / Tunarr numbers) keep working unchanged.
 - Still Plex-only: the command-line `generate_from_collections.py`, and the Planner's Mood/Style channels (Jellyfin has no such tags).
-- Checked on a Jellyfin library of 1,629 movies and 113 shows through Tunarr 2026.10.1.
+- Checked on a Jellyfin library of 1,629 movies and 113 shows through Tunarr 2026.10.1, and with Plex
+  and Jellyfin both in one Tunarr.
+- **Upgrading:** on the first start every existing channel is tagged a Plex channel (no earlier
+  version could use Jellyfin). Nothing about how it plays changes.
+- **Known issues in this beta:** renaming a channel in the channel editor fails on Save and Apply
+  (rename it in Tunarr to match instead); a channel deleted directly in Tunarr stays in Programmarr's
+  list; after updating, press Ctrl+F5 once so the browser loads the new screens.
 
 ## [1.1.2] — 2026-10-15 (my build)
 
