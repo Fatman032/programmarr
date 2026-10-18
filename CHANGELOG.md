@@ -95,6 +95,10 @@ All notable changes to Programmarr are documented here. This project follows
   Add/update compare only against the run's server's channels (the other server's are listed as
   "on your other server (untouched)" and kept), and a full rebuild always keeps the other server's
   channels.
+- **The Planner no longer forgets which channels it built.** Each deploy records the channels the
+  Planner made, but the Planner's autosave (on every pick) rewrote its memory without that list, so
+  the next Add/update preview called the Planner's own channels "not managed by Programmarr" — and
+  could neither update nor remove them. The autosave now keeps the list.
 - **A scan reads ONE server.** With Plex and Jellyfin both set up, Export/Scan reads only the server
   picked in Build Channels (`--server plex|jellyfin` on the command line, Plex by default) — its
   libraries, its "is it in Tunarr?" check (a Plex title doesn't count as synced because Tunarr has

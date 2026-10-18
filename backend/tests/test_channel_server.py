@@ -376,3 +376,22 @@ def test_a_drafts_server_comes_from_its_channels_when_not_stated(run_both):
     assert run_both._run_server({"channels": [{"server": "jellyfin"}]}) == "jellyfin"
     assert run_both._run_server({"server": "plex", "channels": [{"server": "jellyfin"}]}) == "plex"
     assert run_both._run_server({"channels": []}) == "plex"
+
+
+def test_the_planners_autosave_keeps_the_list_of_channels_it_built(run_both):
+    """The autosave sends only picks and settings; it used to wipe "managed_names", so the next
+    preview called the Planner's own channels "not managed by Programmarr"."""
+    run_both.save_planner_state({"selected": {"gd:Comedy:2000": True}}, server="plex")
+    saved = run_both.get_planner_state(server="plex")
+    assert saved["selected"] == {"gd:Comedy:2000": True}
+    assert saved["managed_names"] == ["2020s Comedy", "Old Plex Pick"]
+
+
+def test_a_save_that_sends_the_list_replaces_it(run_both):
+    run_both.save_planner_state({"selected": {}, "managed_names": ["Only This"]}, server="plex")
+    assert run_both.get_planner_state(server="plex")["managed_names"] == ["Only This"]
+
+
+def test_a_first_save_has_no_list_to_keep(run_both):
+    run_both.save_planner_state({"selected": {}}, server="jellyfin")
+    assert "managed_names" not in run_both.get_planner_state(server="jellyfin")

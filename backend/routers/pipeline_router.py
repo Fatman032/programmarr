@@ -2400,8 +2400,20 @@ def get_planner_state(server: str = ""):
 
 @router.put("/pipeline/planner-state")
 def save_planner_state(state: dict, server: str = ""):
-    """Persist the full Planner intent so Add/Edit mode can restore prior selections (per server)."""
+    """Persist the full Planner intent so Add/Edit mode can restore prior selections (per server).
+
+    The screen autosaves only the picks and settings. The list of channels the Planner built
+    ("managed_names", written by each deploy) is kept from the saved file unless sent — the
+    autosave used to drop it, so channels the Planner made looked hand-made in the next preview."""
     p = _planner_state_path(server)
+    if "managed_names" not in state and p.exists():
+        try:
+            with open(p, encoding="utf-8") as f:
+                kept = json.load(f).get("managed_names")
+            if kept is not None:
+                state = {**state, "managed_names": kept}
+        except (OSError, ValueError):
+            pass
     try:
         tmp = p.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
