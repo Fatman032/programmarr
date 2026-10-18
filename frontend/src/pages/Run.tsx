@@ -438,7 +438,7 @@ function ExportStep({ onDone, server }: { onDone: () => void; server: 'plex' | '
   const [noCrossref, setNoCrossref] = useState(false);
 
   useEffect(() => {
-    api.getLibraries()
+    api.getLibraries(server)
       .then(all => {
         // With both servers set up, only the libraries of the server picked in Setup.
         const other = server === 'plex' ? 'jellyfin:' : 'plex:';

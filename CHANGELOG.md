@@ -103,6 +103,9 @@ All notable changes to Programmarr are documented here. This project follows
   picked in Build Channels (`--server plex|jellyfin` on the command line, Plex by default) — its
   libraries, its "is it in Tunarr?" check (a Plex title doesn't count as synced because Tunarr has
   Jellyfin's copy) and its extra titles from Tunarr. The scan summary records which server it read.
+  The library picker lists only that server's libraries — never the other media server's, not even
+  Tunarr's copy of a Jellyfin (or Plex) that Programmarr isn't connected to. Tunarr's other kinds of
+  source (local folders) are still offered.
 - **A Jellyfin collection no longer hides its movies from Export/Scan.** Jellyfin lists a collection in
   place of its members unless asked not to, so once a "Fish" collection existed the export lost its
   10 movies and reported "Fish" as a movie not in Tunarr. It now asks for every movie and show

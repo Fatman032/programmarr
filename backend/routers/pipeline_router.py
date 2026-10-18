@@ -190,10 +190,12 @@ class ExportOptions(BaseModel):
 
 
 @router.get("/pipeline/libraries")
-def list_libraries():
-    """The libraries Export/Scan can read: each connected media server's own movie and TV
-    libraries — Plex sections ("plex:{key}") and/or Jellyfin libraries ("jellyfin:{id}", beta) —
-    then the libraries of every other Tunarr source ("tunarr:{id}")."""
+def list_libraries(server: str = ""):
+    """The libraries a scan of ONE server can read: that server's own movie and TV libraries —
+    Plex sections ("plex:{key}") or Jellyfin libraries ("jellyfin:{id}", beta) — then the libraries
+    of Tunarr's other non-media-server sources ("tunarr:{id}"). `server`: the one being scanned
+    (Build Channels' choice); default Plex if set up, else Jellyfin. The other media server's
+    libraries are never listed — not even Tunarr's copy of a Jellyfin Programmarr isn't connected to."""
     cfg = _load_config()
     tunarr_url = cfg.get("tunarr_url", "").rstrip("/")
     channel_engine.set_tunarr_auth_from_config(cfg)
@@ -204,6 +206,10 @@ def list_libraries():
     has_plex, has_jf = bool(plex_url and plex_token), bool(jf_url and jf_key)
     if not has_plex and not has_jf:
         raise HTTPException(400, "No Plex or Jellyfin server configured")
+    scan = server if server in channel_engine.SERVERS else ("plex" if has_plex else "jellyfin")
+    if scan == "plex" and not has_plex or scan == "jellyfin" and not has_jf:
+        raise HTTPException(400, f"{'Plex' if scan == 'plex' else 'Jellyfin'} isn't set up — add it in Settings")
+    has_plex, has_jf = scan == "plex", scan == "jellyfin"   # one server per scan
 
     result = []
     errors = []
@@ -242,6 +248,8 @@ def list_libraries():
 
         def already_listed(source):
             uri = source.get("uri", "").rstrip("/").lower()
+            if source.get("type") in channel_engine.SERVERS and source.get("type") != scan:
+                return True   # the other media server: a scan reads one server
             if source.get("type") == "plex":
                 return has_plex and uri == plex_url.lower()
             # Tunarr may know the same Jellyfin by a different address than Programmarr does,

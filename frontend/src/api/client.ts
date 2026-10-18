@@ -125,7 +125,8 @@ export const api = {
   getLogs: () => req<LogEntry[]>('/logs'),
   getLog: (name: string) => req<{ name: string; content: string }>(`/logs/${name}`),
 
-  getLibraries: () => req<PlexLibrary[]>('/pipeline/libraries'),
+  // The libraries a scan of ONE server can read (Build Channels' choice); never the other server's.
+  getLibraries: (server?: 'plex' | 'jellyfin') => req<PlexLibrary[]>(`/pipeline/libraries${server ? `?server=${server}` : ''}`),
   getCollections: () => req<PlexCollection[]>('/pipeline/collections'),
   applyCollections: (selections: CollectionSelection[]) =>
     req<{ ok: boolean; added: number }>('/pipeline/collections/apply', {

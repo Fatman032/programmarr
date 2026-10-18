@@ -225,10 +225,20 @@ def test_the_picker_lists_jellyfins_own_libraries(picker):
     assert [(l["key"], l["title"], l["type"]) for l in mine] == [("jellyfin:lm", "Movies", "movie"), ("jellyfin:ls", "Shows", "show")]
 
 
-def test_the_picker_does_not_list_the_same_jellyfin_twice_but_keeps_other_sources(picker):
+def test_the_picker_does_not_list_the_same_jellyfin_twice_or_any_plex(picker, monkeypatch):
+    """A Jellyfin scan lists Jellyfin's libraries once, never a Plex (a scan reads one server),
+    and keeps Tunarr's non-media-server sources such as local folders."""
+    sources = TUNARR_SOURCES + [
+        {"type": "plex", "name": "Friend's Plex", "uri": "http://friend:32400", "libraries": [
+            {"id": "fp", "name": "Friend Movies", "mediaType": "movies", "enabled": True}]},
+        {"type": "local", "name": "Folders", "uri": "", "libraries": [
+            {"id": "lf", "name": "Home Movies", "mediaType": "movies", "enabled": True}]}]
+    monkeypatch.setattr(channel_engine, "api", lambda url, method, path, body=None, timeout=60:
+                        sources if path == "/api/media-sources" else None)
     keys = [l["key"] for l in pipeline_router.list_libraries()]
     assert "tunarr:tm" not in keys and "tunarr:ts" not in keys  # Tunarr's copy of the same Jellyfin
-    assert "tunarr:fp" in keys                                    # a different server stays
+    assert "tunarr:fp" not in keys                                # a Plex: not in a Jellyfin scan
+    assert "tunarr:lf" in keys                                    # local folders stay
 
 
 def test_the_picker_without_any_server_says_so(picker):
@@ -296,11 +306,29 @@ def test_scanning_a_server_that_isnt_set_up_says_so(tmp_path, monkeypatch, jelly
     assert "Plex isn't set up" in capsys.readouterr().out
 
 
-def test_with_both_servers_the_picker_lists_both(picker, monkeypatch):
-    picker["cfg"] = BOTH
+def _plex_sections(monkeypatch):
     monkeypatch.setattr(pipeline_router, "_plex_get", lambda url, token, path:
                         {"MediaContainer": {"Directory": [{"key": "1", "title": "Plex Movies", "type": "movie"}]}})
+
+
+def test_with_both_servers_the_picker_lists_only_the_server_being_scanned(picker, monkeypatch):
+    picker["cfg"] = BOTH
+    _plex_sections(monkeypatch)
+    assert [l["key"] for l in pipeline_router.list_libraries()] == ["plex:1"]   # default: Plex
+    keys = [l["key"] for l in pipeline_router.list_libraries(server="jellyfin")]
+    assert keys == ["jellyfin:lm", "jellyfin:ls"]
+
+
+def test_a_plex_only_setup_never_lists_tunarrs_jellyfin(picker, monkeypatch):
+    """The real case: only Plex connected in Programmarr, but Tunarr also has a Jellyfin source —
+    the picker listed "Jellyfined: Movies / Shows" next to Plex's libraries."""
+    picker["cfg"] = {"tunarr_url": "http://t", "plex_url": "http://friend:32400", "plex_token": "x"}
+    _plex_sections(monkeypatch)
     keys = [l["key"] for l in pipeline_router.list_libraries()]
-    assert "plex:1" in keys and "jellyfin:lm" in keys and "jellyfin:ls" in keys
-    assert "tunarr:fp" not in keys  # Tunarr's copy of the same Plex
-    assert "tunarr:tm" not in keys  # Tunarr's copy of the same Jellyfin
+    assert keys == ["plex:1"]
+
+
+def test_scanning_a_server_that_isnt_set_up_is_refused(picker):
+    with pytest.raises(HTTPException) as e:
+        pipeline_router.list_libraries(server="plex")
+    assert e.value.status_code == 400 and "Plex isn't set up" in e.value.detail
