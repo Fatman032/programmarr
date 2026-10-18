@@ -2093,6 +2093,13 @@ function DeployStep({ setup }: { setup: SetupState }) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewConfirmed, setPreviewConfirmed] = useState(false);
+  // Add/update: the number for each NEW channel (prefilled with the automatic one; editable), and
+  // every number Tunarr already uses — a new channel can't take one of those.
+  const [createNums, setCreateNums] = useState<Record<string, number>>({});
+  const [tunarrNums, setTunarrNums] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    api.getTunarrChannels().then(chs => setTunarrNums(new Set(chs.map(c => c.number)))).catch(() => {});
+  }, []);
   // Collapsed state for long preview bucket lists.
   const [previewExpanded, setPreviewExpanded] = useState<Record<string, boolean>>({});
 
@@ -2104,6 +2111,14 @@ function DeployStep({ setup }: { setup: SetupState }) {
   const hasJellyfin = !!(config.jellyfin_url && config.jellyfin_api_key);
 
   const isEditMode = setup.mode === 'edit';
+  // Why a new channel's number can't be used: taken in Tunarr, picked twice, or below 1.
+  function numberProblem(name: string): string | null {
+    const n = createNums[name];
+    if (!n || n < 1) return 'pick 1 or more';
+    if (tunarrNums.has(n)) return 'already a channel';
+    if (Object.entries(createNums).some(([other, m]) => other !== name && m === n)) return 'picked twice';
+    return null;
+  }
   const protectedNums = setup.protectedNums;
   const effectiveProtected = new Set(protectedNums);
   const activeDeployNums = new Set(channelSels.filter(s => s.include).map(s => s.deployNumber));
@@ -2118,6 +2133,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
     try {
       const result = await api.deployPreview(isEditMode ? 'edit' : 'nuke');
       setPreview(result);
+      setCreateNums(Object.fromEntries(result.create.map(c => [c.name, c.number ?? 0])));
     } catch (e: any) {
       setPreviewError(e?.message ?? 'Failed to load preview');
     } finally {
@@ -2206,7 +2222,8 @@ function DeployStep({ setup }: { setup: SetupState }) {
     let dcode: number;
     if (setup.mode === 'edit') {
       // Surgical deploy: create new, delete removed, update changed, leave unchanged.
-      dcode = await streamPipeline('/pipeline/surgical-deploy', {}, (ev) => { if (ev.type === 'line') setDeployLines(l => [...l, ev.text]); });
+      dcode = await streamPipeline('/pipeline/surgical-deploy', {}, (ev) => { if (ev.type === 'line') setDeployLines(l => [...l, ev.text]); },
+        { numbers: createNums });
     } else {
       const body = {
         selections: channelSels.map(s => ({ original_number: s.number, deploy_number: s.deployNumber, include: s.include })),
@@ -2447,7 +2464,23 @@ function DeployStep({ setup }: { setup: SetupState }) {
                 <Stack gap="xs" mb="md">
                   <Text size="sm" fw={600}>What will happen:</Text>
                   {preview.create.length > 0 && (
-                    <PreviewBucket label="new (create)" channels={preview.create} color="green" symbol="+" />
+                    <Box>
+                      <Text size="sm" fw={600} c="green">+ {preview.create.length} new (create) — pick each one's channel number</Text>
+                      <Stack gap={4} mt={4} ml="md">
+                        {preview.create.map((c) => {
+                          const problem = numberProblem(c.name);
+                          return (
+                            <Group key={c.name} gap="xs" wrap="nowrap">
+                              <NumberInput value={createNums[c.name] ?? c.number ?? ''} min={1} max={9999} size="xs" w={70}
+                                error={!!problem} styles={{ input: { textAlign: 'center', paddingInline: 4 } }}
+                                onChange={(v) => { const n = typeof v === 'number' ? v : parseInt(String(v)); setCreateNums(s => ({ ...s, [c.name]: isNaN(n) ? 0 : n })); }} />
+                              <Text size="xs" style={{ flex: 1, minWidth: 0 }} lineClamp={1}>{c.name}</Text>
+                              {problem && <Badge size="xs" color="red" style={{ flexShrink: 0 }}>{problem}</Badge>}
+                            </Group>
+                          );
+                        })}
+                      </Stack>
+                    </Box>
                   )}
                   {preview.update.length > 0 && (
                     <PreviewBucket label="changed (update in place)" channels={preview.update} color="blue" symbol="~" />
@@ -2469,6 +2502,7 @@ function DeployStep({ setup }: { setup: SetupState }) {
                   )}
                   <Group gap="sm" mt="xs">
                     <Button color="orange" leftSection={<IconPlayerPlay size={15} />}
+                      disabled={preview.create.some(c => numberProblem(c.name))}
                       onClick={() => { setPreviewConfirmed(true); runCascade(); }}>
                       Apply Changes
                     </Button>

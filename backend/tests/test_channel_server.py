@@ -395,3 +395,31 @@ def test_a_save_that_sends_the_list_replaces_it(run_both):
 def test_a_first_save_has_no_list_to_keep(run_both):
     run_both.save_planner_state({"selected": {}}, server="jellyfin")
     assert "managed_names" not in run_both.get_planner_state(server="jellyfin")
+
+
+# ── Add/update: choose each new channel's number ─────────────────────────────────────
+
+def test_chosen_numbers_go_on_the_new_channels(run_both):
+    desired = [{"name": "2000s Comedy", "number": 9}, {"name": "Fish", "number": 10}]
+    run_both._choose_numbers(desired, {"2000S COMEDY": 21})
+    assert [c["number"] for c in desired] == [21, 10]
+
+
+def test_number_clashes_are_spelled_out(run_both):
+    new = [{"name": "A", "number": 1}, {"name": "B", "number": 7}, {"name": "C", "number": 7}, {"name": "D", "number": 0}]
+    assert run_both._number_clashes(new, {1, 2}) == [
+        "#1 ('A') is already a channel in Tunarr", "#7 is picked for both 'B' and 'C'",
+        "'D' needs a channel number of 1 or more"]
+    assert run_both._number_clashes([{"name": "A", "number": 5}], {1, 2}) == []
+
+
+def test_a_clashing_number_is_refused_before_anything_is_created(run_both, monkeypatch):
+    """Even if the screen's check were bypassed, the deploy checks Tunarr first."""
+    _draft(run_both, "plex", [{"number": 30, "name": "Brand New", "server": "plex", "content": ["X"]}])
+    monkeypatch.setattr(channel_engine, "api", lambda url, method, path, body=None, timeout=60:
+                        [{"number": 1}, {"number": 4}] if path == "/api/channels" else None)
+    import asyncio
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(run_both.run_surgical_deploy(run_both.SurgicalDeployRequest(numbers={"Brand New": 4})))
+    assert e.value.status_code == 409 and "#4 ('Brand New') is already a channel in Tunarr" in e.value.detail

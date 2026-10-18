@@ -99,6 +99,10 @@ All notable changes to Programmarr are documented here. This project follows
   Planner made, but the Planner's autosave (on every pick) rewrote its memory without that list, so
   the next Add/update preview called the Planner's own channels "not managed by Programmarr" — and
   could neither update nor remove them. The autosave now keeps the list.
+- **Choose the channel number for new channels in Add/update.** The deploy preview's "new (create)"
+  list has a number box per channel, prefilled with the automatic number — like the full rebuild's.
+  A number already used by any channel in Tunarr (either server's, or hand-made), or picked twice, is
+  flagged and Apply Changes waits until it's fixed; the deploy checks Tunarr again before creating.
 - **A scan reads ONE server.** With Plex and Jellyfin both set up, Export/Scan reads only the server
   picked in Build Channels (`--server plex|jellyfin` on the command line, Plex by default) — its
   libraries, its "is it in Tunarr?" check (a Plex title doesn't count as synced because Tunarr has

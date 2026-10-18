@@ -2555,13 +2555,39 @@ def deploy_preview(req: DeployPreviewRequest = DeployPreviewRequest()):
 
 
 class SurgicalDeployRequest(BaseModel):
-    # No extra parameters needed: desired = draft, deployed = channels.json.
-    # These flags mirror DeployRequest for the cascade.
-    pass
+    # desired = draft, deployed = channels.json. `numbers`: the channel number the person chose for
+    # each NEW channel in the preview, by name (empty = the Planner's automatic numbers).
+    numbers: dict[str, int] = {}
+
+
+def _choose_numbers(desired: list[dict], numbers: dict[str, int]) -> None:
+    """Put the chosen numbers on the draft's channels (by name, any case)."""
+    chosen = {k.strip().lower(): v for k, v in (numbers or {}).items() if isinstance(v, int)}
+    for ch in desired:
+        n = chosen.get((ch.get("name") or "").strip().lower())
+        if n is not None:
+            ch["number"] = n
+
+
+def _number_clashes(new_channels: list[dict], tunarr_numbers: set[int]) -> list[str]:
+    """Why these new channels' numbers can't be used: below 1, already a channel in Tunarr (any
+    server's, or hand-made), or the same number twice. [] when they're all fine."""
+    problems, seen = [], {}
+    for ch in new_channels:
+        n, name = ch.get("number"), ch.get("name", "")
+        if not isinstance(n, int) or n < 1:
+            problems.append(f"'{name}' needs a channel number of 1 or more")
+        elif n in tunarr_numbers:
+            problems.append(f"#{n} ('{name}') is already a channel in Tunarr")
+        elif n in seen:
+            problems.append(f"#{n} is picked for both '{seen[n]}' and '{name}'")
+        else:
+            seen[n] = name
+    return problems
 
 
 @router.post("/pipeline/surgical-deploy")
-async def run_surgical_deploy():
+async def run_surgical_deploy(req: SurgicalDeployRequest = SurgicalDeployRequest()):
     """Surgical diff deploy for Add/Edit mode.
 
     Desired state  = channels.draft.json  (the planner's fresh output).
@@ -2591,6 +2617,7 @@ async def run_surgical_deploy():
         draft_data = json.load(f)
 
     desired, deployed, prior_managed, other_server, run_server = _load_deploy_inputs()
+    _choose_numbers(desired, req.numbers)   # the numbers picked for new channels in the preview
     canon_path = DATA_DIR / "channels.json"
 
     # Also reload this server's Planner memory for the managed_names merge after deploy.
@@ -2612,6 +2639,12 @@ async def run_surgical_deploy():
     plex_token = cfg.get("plex_token", "")
     if not tunarr_url:
         raise HTTPException(400, "Tunarr not configured")
+    if req.numbers and diff["create"]:
+        # Checked against Tunarr itself before anything is created — never two channels on one number.
+        live = channel_engine.api(tunarr_url, "GET", "/api/channels") or []
+        clashes = _number_clashes(diff["create"], {c.get("number") for c in live if isinstance(c.get("number"), int)})
+        if clashes:
+            raise HTTPException(409, "Pick different channel numbers: " + "; ".join(clashes))
 
     async def _stream_surgical() -> AsyncGenerator[str, None]:
         def _emit(text: str) -> str:
