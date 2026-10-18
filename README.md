@@ -19,6 +19,7 @@
 > - **Nothing is skipped silently.** A title that can't be found is reported with the reason, on the channel list and in the editor.
 > - **Live rules.** A channel can follow a genre, studio, director, actor or decade, asked of Plex again on every refresh, so a Live channel gains new matches on its own.
 > - **Several commercial filler lists per channel,** and they now actually reach Tunarr when you Apply.
+> - **Jellyfin support (beta)** — see [Jellyfin (beta)](#jellyfin-beta) below.
 >
 > Images: `ghcr.io/fatman032/programmarr:latest` is the latest release; every build is also tagged `sha-<short commit>` (pin one of those if you want a version that never moves). A **pre-release** (beta) is published on GitHub as a pre-release and tagged `:beta`; `:latest` only ever points at a normal release.
 
@@ -28,13 +29,23 @@ You **compose** the lineup in a **Planner**: pick the genres, decades, studios, 
 
 Channels can also be **self-maintaining**: mark one "live" and Programmarr re-checks it against your library on a schedule and patches it in place — new episodes and new franchise films appear on their own, no redeploy.
 
-**Requires:** [Tunarr](https://github.com/chrisbenincasa/tunarr) **1.x** + **Plex**
+**Requires:** [Tunarr](https://github.com/chrisbenincasa/tunarr) + **Plex**, or **Jellyfin** (beta), or both
 
-> **Plex only.** Programmarr reads your library metadata from the Plex API, so it needs a
-> Plex-backed source in Tunarr. Jellyfin and Emby aren't supported yet — if a Tunarr has no
-> Plex source, Programmarr will tell you so rather than failing mysteriously.
-> Interested in Jellyfin support? Say so on
-> [the tracking issue](https://github.com/AlpineArchitecture/programmarr/issues/36) — demand decides priority.
+### Jellyfin (beta)
+
+Jellyfin support is in the **beta** — [v1.2.0-beta.1](https://github.com/Fatman032/programmarr/releases/tag/v1.2.0-beta.1),
+image `ghcr.io/fatman032/programmarr:beta`. Stable (`:latest`) is still Plex-only. Back up your `data`
+folder before trying it. Asked for in upstream issue [#36](https://github.com/jamesmattson/programmarr/issues/36).
+
+- **Set up Plex, Jellyfin, or both** — Jellyfin takes a URL and an API key (Jellyfin: Dashboard → API Keys).
+- **Everything works the same as with Plex:** the library scan, channel building, pinned titles,
+  Jellyfin collections, and live rules (genre, studio, director, actor, decade) that update on their own.
+- **Live TV:** add Tunarr to Jellyfin's Live TV once (an M3U tuner and an XMLTV guide — the deploy
+  screen shows the addresses); after that every deploy refreshes Jellyfin's guide by itself.
+- **One server per channel:** with both servers in one Tunarr, each channel plays from one of them,
+  never a mix. Build Channels asks which server the new channels are for. Every channel still shows
+  up in both Plex and Jellyfin Live TV.
+- **Not covered yet:** Emby, and the Planner's Mood/Style channels (Jellyfin has no such tags).
 
 ---
 
