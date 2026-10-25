@@ -4,7 +4,7 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased] (beta)
+## [1.2.0-beta.2] — 2026-10-25 (my build, BETA — Jellyfin support and the new play orders are beta)
 
 ### Added
 
@@ -19,6 +19,19 @@ All notable changes to Programmarr are documented here. This project follows
     it, and specials go by their own date.
   Like Timeline, they don't use the shuffle setting or commercial padding, and every Apply or live
   refresh starts the channel from the top (the editor says so; turn Live off to keep its place).
+
+### Notes
+
+- Air-date order checked on a real 1,668-program channel (The Simpsons, Bob's Burgers, King of the
+  Hill, Futurama, Rick and Morty and their movies): each movie lands between the episodes that aired
+  around it, and every show keeps its episode order.
+- 1.2.0-beta.1 has run on a Plex + Jellyfin setup (both in one Tunarr) since 2026-10-24.
+- **Known issues in this beta:** the play order is set in two places in the channel editor —
+  *Shuffle mode* at the top and *Playback structure* further down (List order, Air-date order and
+  Timeline are in Playback structure, and they ignore Shuffle mode); renaming a channel in the
+  channel editor fails on Save and Apply (rename it in Tunarr to match instead); a channel deleted
+  directly in Tunarr stays in Programmarr's list; after updating, press Ctrl+F5 once so the browser
+  loads the new screens.
 
 ## [1.2.0-beta.1] — 2026-10-18 (my build, BETA — Jellyfin support is beta; being tested)
 
