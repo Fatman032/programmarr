@@ -4,7 +4,7 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.2.0-beta.2] — 2026-10-25 (my build, BETA — Jellyfin support and the new play orders are beta)
+## [1.2.0-beta.2] — 2026-10-25 (BETA — Jellyfin support and the new play orders are beta)
 
 ### Added
 
@@ -33,7 +33,7 @@ All notable changes to Programmarr are documented here. This project follows
   directly in Tunarr stays in Programmarr's list; after updating, press Ctrl+F5 once so the browser
   loads the new screens.
 
-## [1.2.0-beta.1] — 2026-10-18 (my build, BETA — Jellyfin support is beta; being tested)
+## [1.2.0-beta.1] — 2026-10-18 (BETA — Jellyfin support is beta; being tested)
 
 ### Added
 
@@ -171,7 +171,7 @@ All notable changes to Programmarr are documented here. This project follows
   (rename it in Tunarr to match instead); a channel deleted directly in Tunarr stays in Programmarr's
   list; after updating, press Ctrl+F5 once so the browser loads the new screens.
 
-## [1.1.2] — 2026-10-15 (my build)
+## [1.1.2] — 2026-10-15
 
 ### Fixed
 
@@ -180,7 +180,7 @@ All notable changes to Programmarr are documented here. This project follows
   but still reported success, so the deploy screen said the Plex sync was complete and never showed
   the box. It now reports that manual steps are needed, and the box appears with the XMLTV address.
 
-## [1.1.1] — 2026-10-10 (my build)
+## [1.1.1] — 2026-10-10
 
 ### Fixed
 
@@ -208,7 +208,7 @@ All notable changes to Programmarr are documented here. This project follows
 - The first automatic check after upgrading rebuilds each big channel once, to learn its baseline.
   Restarting Programmarr runs a check; after this release that no longer reshuffles unchanged channels.
 
-## [1.1.0] — 2026-10-04 (my build)
+## [1.1.0] — 2026-10-04
 
 Based on upstream v0.8.1, on top of my v1.0.
 
