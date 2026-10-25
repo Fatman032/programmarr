@@ -245,7 +245,7 @@ export function buildCommercials(ids: string[], lists: FillerList[], padMinutes:
     pad_minutes: padMinutes,
   };
 }
-export interface PlaybackSetting { structure: 'interleaved' | 'timeline'; episodes_per_block?: number }
+export interface PlaybackSetting { structure: 'interleaved' | 'timeline' | 'list' | 'airdate'; episodes_per_block?: number }
 export interface MatchRef { match: 'title_contains'; value: string; order?: string | null; exclude?: string[] }
 export interface FranchiseRef { match: 'franchise'; name: string; order?: string | null; exclude?: string[] }
 // { movie } / { show }: a title pinned to one media type (a movie and a show can share a title).

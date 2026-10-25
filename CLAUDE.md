@@ -307,11 +307,14 @@ Channels-editor icon control). `fetch_images.py` skips pinned channels and never
 this field; removing it (the editor's "Reset to automatic") returns the channel to the
 automatic art pass.
 
-**Playback structure (optional).** `"playback": {"structure": "interleaved"|"timeline",
+**Playback structure (optional).** `"playback": {"structure": "interleaved"|"timeline"|"list"|"airdate",
 "episodes_per_block": 4}` controls cross-media scheduling: *interleaved* keeps movies in
 watch order with ~N-episode blocks between (random-slot weights); *timeline* posts a manual
 Tunarr lineup in strict release order (show runs air at their premiere position; commercials
-padding is a no-op there). Absent = today's shuffle behavior. Live franchise channels compose
+padding is a no-op there); *list* (beta) posts a manual lineup in the order the items are listed
+(each show's whole run, season/episode order, specials after); *airdate* (beta) posts every
+episode and movie by release date, all mixed (undated episodes follow the episode before them;
+specials go by their own date). Absent = today's shuffle behavior. Live franchise channels compose
 with interleaved/4 by default; editable per channel in the Channels editor.
 
 ## API Endpoints

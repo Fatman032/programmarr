@@ -1556,6 +1556,73 @@ def _item_premiere_ms(item):
     return float("inf")
 
 
+def _season_index(p):
+    season = p.get("program", {}).get("season")
+    return (season.get("index") or 0) if isinstance(season, dict) else 0
+
+
+def _straight_lineup(programs):
+    """A Tunarr manual lineup that plays `programs` straight through, then loops. A program listed
+    twice (e.g. a show added by hand and by a rule) plays once, at its first spot."""
+    lineup, seen = [], set()
+    for p in programs:
+        if p["id"] in seen:
+            continue
+        seen.add(p["id"])
+        lineup.append({"type": "content", "id": p["id"],
+                       "duration": int(p.get("program", {}).get("duration") or 0) or 1})
+    return {"type": "manual", "lineup": lineup, "append": False}
+
+
+def _list_order(resolved_items):
+    """The channel's items in the order they're listed; a show plays its whole run in
+    season/episode order where it's listed, with its specials (season 0) after the run."""
+    programs = []
+    for item in resolved_items:
+        progs = item.get("programs") or []
+        if item["type"] == "TV":
+            progs = sorted(progs, key=lambda p: (_season_index(p) == 0, _episode_sort_key(p)))
+        programs.extend(progs)
+    return programs
+
+
+def _airdate_order(resolved_items):
+    """Every episode and movie by the date it came out, all items mixed together (TV as it aired).
+
+    A show's episodes always keep their season/episode order: an episode without a date (or with
+    one earlier than the episode before it) sits right after the episode before it, and episodes
+    before the first dated one sit just ahead of it. Specials (season 0) go by their own date --
+    they're often dated years after the show began, so they never move the regular episodes.
+    A movie or show with no dates at all falls back to Jan 1 of its year, else the end.
+    Ties (same day) keep the list order, then episode order."""
+    rows = []
+    for idx, item in enumerate(resolved_items):
+        progs = item.get("programs") or []
+        fallback = _item_premiere_ms(item)
+        if item["type"] != "TV":
+            for pos, p in enumerate(progs):
+                d = p.get("program", {}).get("releaseDate")
+                rows.append((d if d is not None else fallback, idx, pos, p))
+            continue
+        regular = sorted((p for p in progs if _season_index(p) != 0), key=_episode_sort_key)
+        dates = [p.get("program", {}).get("releaseDate") for p in regular]
+        first = next((d for d in dates if d is not None), fallback)
+        current = None
+        for pos, (p, d) in enumerate(zip(regular, dates)):
+            if d is not None and (current is None or d >= current):
+                current = d
+            elif current is None:
+                current = first
+            rows.append((current, idx, pos, p))
+        last = current if current is not None else fallback
+        specials = sorted((p for p in progs if _season_index(p) == 0), key=_episode_sort_key)
+        for pos, p in enumerate(specials):
+            d = p.get("program", {}).get("releaseDate")
+            rows.append((d if d is not None else last, idx, len(regular) + pos, p))
+    rows.sort(key=lambda r: (r[0], r[1], r[2]))
+    return [r[3] for r in rows]
+
+
 def build_schedule(shuffle_type, resolved_items, pad_ms=0, playback=None):
     """Build a rolling random schedule.
 
@@ -1573,11 +1640,22 @@ def build_schedule(shuffle_type, resolved_items, pad_ms=0, playback=None):
       fallback, unknown → +inf); shows flattened in season/episode order at their
       premiere position. Commercials padding is a no-op in v1 (manual lineups
       don't auto-pad).
+    - {"structure": "list"} posts a manual lineup in the order the items are listed: each
+      show's whole run (season/episode order) where it's listed, each movie where it's listed.
+    - {"structure": "airdate"} posts a manual lineup of every episode and movie by the date it
+      came out, all items mixed together (see _airdate_order).
+      Like timeline, both are straight-through lineups that loop; commercials padding is a
+      no-op there.
     - None (default) = unchanged legacy behavior (all weights 1).
     """
     all_programs = [p for item in resolved_items for p in item["programs"]]
     if not all_programs:
         return None
+
+    if (playback or {}).get("structure") == "list":
+        return _straight_lineup(_list_order(resolved_items))
+    if (playback or {}).get("structure") == "airdate":
+        return _straight_lineup(_airdate_order(resolved_items))
 
     if (playback or {}).get("structure") == "timeline":
         # Strict release order as ONE looping manual lineup: each item at its

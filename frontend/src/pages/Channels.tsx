@@ -434,8 +434,8 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
     if (commercials) payload.commercials = commercials;
     if (pbStructure === 'interleaved') {
       payload.playback = { structure: 'interleaved', episodes_per_block: Number(pbEpisodes) || 4 };
-    } else if (pbStructure === 'timeline') {
-      payload.playback = { structure: 'timeline' };
+    } else if (pbStructure === 'timeline' || pbStructure === 'list' || pbStructure === 'airdate') {
+      payload.playback = { structure: pbStructure };
     }
     // 'default' → no playback key at all
     await api.updateChannel(channel!.number, payload);
@@ -790,14 +790,22 @@ Live rules and collections stay. Nothing is saved until you click Save and Apply
             { value: 'default', label: 'Standard (use shuffle setting)' },
             { value: 'interleaved', label: 'Interleaved — movies in order, episode blocks between' },
             { value: 'timeline', label: 'Timeline — strict release order' },
+            { value: 'list', label: 'List order — plays everything in the order listed' },
+            { value: 'airdate', label: 'Air-date order — every episode and movie by release date' },
           ]}
         />
         {pbStructure === 'interleaved' && (
           <NumberInput size="xs" label="Episodes per block" min={1} max={12}
                        value={pbEpisodes} onChange={setPbEpisodes} />
         )}
-        {pbStructure === 'timeline' && (
-          <Text size="xs" c="dimmed">Commercial padding is not applied in timeline mode.</Text>
+        {pbStructure === 'list' && (
+          <Text size="xs" c="dimmed">Each show plays its whole run in episode order where it's listed, then the next item.</Text>
+        )}
+        {pbStructure === 'airdate' && (
+          <Text size="xs" c="dimmed">Everything is mixed by the date it came out, like watching TV as it aired. A movie lands between the episodes around its release date.</Text>
+        )}
+        {['timeline', 'list', 'airdate'].includes(pbStructure) && (
+          <Text size="xs" c="dimmed">Plays straight through, then starts over. The shuffle setting and commercial padding aren't used. Every Apply, and every live refresh, starts it from the top — turn Live off to keep its place.</Text>
         )}
 
         {channel && (

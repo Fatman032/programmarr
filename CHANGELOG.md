@@ -4,6 +4,22 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] (beta)
+
+### Added
+
+- **Two new play orders (Channels editor → Playback structure).** Both play the channel straight
+  through, then start over:
+  - **List order** — the items in the order they're listed: each show's whole run in episode order
+    where it's listed (specials after the run), each movie where it's listed. A hand-built marathon
+    (all of one show, then its movie, then the next show) can now be made in Programmarr.
+  - **Air-date order** — every episode and movie by the date it came out, all mixed together, like
+    watching TV as it aired: a show's movie lands between the episodes around its release date.
+    A show's episodes always stay in episode order; an episode with no date follows the one before
+    it, and specials go by their own date.
+  Like Timeline, they don't use the shuffle setting or commercial padding, and every Apply or live
+  refresh starts the channel from the top (the editor says so; turn Live off to keep its place).
+
 ## [1.2.0-beta.1] — 2026-10-18 (my build, BETA — Jellyfin support is beta; being tested)
 
 ### Added
