@@ -18,7 +18,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Login only needed when we actually push (release). Master build-check skips it.
+      # Login only needed when we push: a release, or a main/jellyfin push. Master build-check skips it.
       - name: Log in to GHCR
         if: github.event_name == 'release' || (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jellyfin')
         uses: docker/login-action@v3
@@ -41,8 +41,9 @@ jobs:
             type=ref,event=branch,enable=${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jellyfin') }}
             type=sha,prefix=sha-,format=short,enable=${{ github.event_name == 'release' || (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/jellyfin') }}
 
-      # push: true ONLY on a release. On a master push this is a pure build-check —
-      # it proves the image compiles but pushes nothing to GHCR, so no user ever pulls it.
+      # Pushes on a release, and on a main/jellyfin push (branch tag + sha- tag only,
+      # e.g. :jellyfin — never :latest or :beta, which come only from a release).
+      # On a master push this is a pure build-check — nothing goes to GHCR.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
