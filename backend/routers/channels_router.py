@@ -83,12 +83,17 @@ def get_channel(number: int):
 
 @router.put("/channels/{number}")
 def update_channel(number: int, channel: dict):
+    # A blank name can't reach Tunarr, so it would leave the record and Tunarr out of step.
+    if not isinstance(channel.get("name"), str) or not channel["name"].strip():
+        raise HTTPException(400, "A channel needs a name")
     data = load()
     for i, ch in enumerate(data.get("channels", [])):
         if ch.get("number") == number:
             # A channel keeps the server it was made for — an edit that doesn't say never resets it.
             if channel.get("server") not in channel_engine.SERVERS and ch.get("server") in channel_engine.SERVERS:
                 channel["server"] = ch["server"]
+            # A rename reaches Tunarr only on Apply — remember the name Tunarr has until then.
+            channel_engine.note_rename(ch, channel)
             data["channels"][i] = channel
             save(data)
             return {"ok": True}
@@ -160,22 +165,38 @@ async def apply_channel(number: int):
                 f"Channel #{number} not in Tunarr — create it in the Planner first")
 
         pad_ms, filler_ids = channel_engine.commercial_settings(ch.get("commercials"))
+        outcome = {}
         channel_engine.update_channel_in_place(
             tunarr_url, number, ch.get("shuffle", "shuffle"), resolved, pad_ms=pad_ms,
-            expected_name=ch.get("name"), playback=ch.get("playback"), filler_list_ids=filler_ids,
-            restart=True)
+            expected_name=channel_engine.guard_names(ch), playback=ch.get("playback"),
+            filler_list_ids=filler_ids, restart=True, new_name=ch.get("name"), outcome=outcome)
         scheduler.record_applied(DATA_DIR, number, scheduler._program_ids(resolved))
 
-        # An entry whose main number went stale but was found through a spare gets its
-        # current numbers written back, so the next resolve matches on the first number.
-        # Re-loaded fresh, and only that channel's content is touched.
-        if report.get("healed"):
+        # Re-loaded fresh, and only that channel is touched:
+        #  - `tunarr_name` (the names Tunarr might still have) is settled now that Tunarr's
+        #    name is confirmed: dropped when it equals the saved name, or set to just that
+        #    name when a Save renamed the channel again while this Apply ran;
+        #  - an entry whose main number went stale but was found through a spare gets its
+        #    current numbers written back, so the next resolve matches on the first number.
+        in_tunarr = outcome.get("name")
+        if report.get("healed") or "tunarr_name" in ch or in_tunarr:
             data = load()
             for saved in data.get("channels", []):
                 if saved.get("number") == number:
-                    refreshed = channel_engine.apply_healed(saved.get("content", []), report["healed"])
-                    if refreshed != saved.get("content"):
-                        saved["content"] = refreshed
+                    changed = False
+                    if in_tunarr:
+                        before = saved.get("tunarr_name")
+                        if (saved.get("name") or "").strip() == in_tunarr:
+                            saved.pop("tunarr_name", None)
+                        else:
+                            saved["tunarr_name"] = [in_tunarr]
+                        changed = saved.get("tunarr_name") != before
+                    if report.get("healed"):
+                        refreshed = channel_engine.apply_healed(saved.get("content", []), report["healed"])
+                        if refreshed != saved.get("content"):
+                            saved["content"] = refreshed
+                            changed = True
+                    if changed:
                         save(data)
                     break
         return len(resolved), notice

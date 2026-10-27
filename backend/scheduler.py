@@ -280,11 +280,15 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
         # Guard the by-number scramble: if the Tunarr channel at this number is not the
         # one our record names, channels.json has drifted out of sync with Tunarr — skip
         # rather than overwrite the wrong channel. (See channel_engine.update_channel_in_place.)
-        if (tch.get("name") or "").strip().lower() != name.strip().lower():
+        # A rename saved but not yet applied may leave Tunarr with any of the names listed
+        # in tunarr_name; any of those, or the entry's name, is accepted (guard_names).
+        in_tunarr = channel_engine.guard_names(ch) or [name]
+        if not channel_engine.name_matches(tch.get("name"), in_tunarr):
+            expects = "' or '".join(in_tunarr)
             summary["skipped"].append({
                 "number": number, "name": name,
                 "reason": (f"name mismatch — Tunarr #{number} is '{tch.get('name')}', "
-                           f"record expects '{name}'; refusing to overwrite (out of sync)")})
+                           f"record expects '{expects}'; refusing to overwrite (out of sync)")})
             continue
         cur_ids = channel_engine.read_channel_programming(tunarr_url, tch["id"])
         if cur_ids is None:
@@ -320,7 +324,7 @@ def _run_cycle_blocking(apply: bool, only: int = None) -> dict:
                 pad_ms, filler_ids = channel_engine.commercial_settings(ch.get("commercials"))
                 channel_engine.update_channel_in_place(
                     tunarr_url, number, ch.get("shuffle", "shuffle"), resolved,
-                    pad_ms=pad_ms, expected_name=name, playback=ch.get("playback"),
+                    pad_ms=pad_ms, expected_name=in_tunarr, playback=ch.get("playback"),
                     filler_list_ids=filler_ids, restart=True)
                 change["applied"] = True
                 applied_updates[number] = fresh_ids

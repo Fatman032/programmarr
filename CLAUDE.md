@@ -301,6 +301,16 @@ the basis for future era-matched pooling (90s ads → 90s channel; see `docs/ide
 **Mid-roll (ads inside a show) is deliberately not used — it doesn't stream on hardware-accelerated
 (QSV) Tunarr; see [`docs/tunarr-commercials-findings.md`](docs/tunarr-commercials-findings.md).**
 
+**Pending rename (`tunarr_name`).** A rename saved in the Channels editor reaches Tunarr only
+on Apply, so until then the entry carries `"tunarr_name"`: a list of every name Tunarr might
+still have since its last confirmed one (a timed-out rename may have landed), newest last
+(no cap); an older string value reads as a one-item list. Set by
+`PUT /api/channels/{number}` (`channel_engine.note_rename`; a blank name is refused with 400);
+cleared by Apply, or by a Build Channels update, once Tunarr confirms the entry's `name` (set
+to just the applied name if another Save renamed it meanwhile). The name-match guard (see Live
+Channels) accepts any of those names or `name` (`channel_engine.guard_names`), and still
+refuses a name the record never had.
+
 **Icon pin (optional).** A channel may carry `"icon": {"mode": "badge"|"tmdb"|"custom",
 "url": "…", "pinned": true}` — written only by `POST /api/channels/{number}/icon` (the
 Channels-editor icon control). `fetch_images.py` skips pinned channels and never writes
@@ -437,8 +447,9 @@ default (`recipes_enabled: false`).
    Tunarr id. **Never** delete-and-recreate a live channel — that changes the Tunarr id and
    breaks the Plex DVR mapping. (`create.py`'s delete/recreate path is for *initial* deploy
    only; the scheduler must never use it.) **Name-match guard:** `update_channel_in_place`
-   takes `expected_name` and refuses to patch (raises) if the Tunarr channel at that number
-   carries a different name — so a `channels.json` that has drifted out of sync with Tunarr's
+   takes `expected_name` (one name, or the entry's `guard_names` — its `tunarr_name` and
+   `name`) and refuses to patch (raises) if the Tunarr channel at that number carries any
+   other name — so a `channels.json` that has drifted out of sync with Tunarr's
    numbering (two writers on one Tunarr; an orphan shifting numbers) can never silently
    overwrite the wrong channel. The scheduler skips + logs such mismatches instead of scrambling.
 2. **Tunarr is the source of truth.** Each cycle diffs freshly-resolved program ids against the

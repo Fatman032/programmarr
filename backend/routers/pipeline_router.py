@@ -2677,6 +2677,7 @@ async def run_surgical_deploy(req: SurgicalDeployRequest = SurgicalDeployRequest
                     f"{len(diff['foreign'])} foreign (untouched)")
 
         errors: list[str] = []
+        renamed: set[str] = set()   # updated channels whose name is now the same in Tunarr
 
         async with scheduler.deploy_lock:
             # ── 0. Build Tunarr library index once for all updates ────────────
@@ -2705,7 +2706,8 @@ async def run_surgical_deploy(req: SurgicalDeployRequest = SurgicalDeployRequest
                 yield _emit(f"  Updating #{num} {name} in place…")
 
                 def _do_update(ch=desired_ch, n=num, mv=movie_map_shared, sh=show_map_shared,
-                               fi=franchise_index_shared, ix=id_index_shared):
+                               fi=franchise_index_shared, ix=id_index_shared,
+                               in_tunarr=channel_engine.guard_names(item["deployed"]) or [""]):
                     plex_sections, collection_cache = [], {}
                     if any(isinstance(it, dict) and "collection" in it for it in ch.get("content", [])):
                         if plex_url and plex_token:
@@ -2725,15 +2727,19 @@ async def run_surgical_deploy(req: SurgicalDeployRequest = SurgicalDeployRequest
                         raise channel_engine.ChannelEngineError(
                             f"Channel #{n}: resolved to empty — refusing to update")
                     pad_ms, filler_ids = channel_engine.commercial_settings(ch.get("commercials"))
+                    outcome = {}
                     channel_engine.update_channel_in_place(
                         tunarr_url, n, ch.get("shuffle", "shuffle"), resolved, pad_ms=pad_ms,
-                        expected_name=ch.get("name"), playback=ch.get("playback"),
-                        filler_list_ids=filler_ids, restart=True)
+                        expected_name=in_tunarr, playback=ch.get("playback"),
+                        filler_list_ids=filler_ids, restart=True, new_name=ch.get("name"),
+                        outcome=outcome)
                     scheduler.record_applied(DATA_DIR, n, scheduler._program_ids(resolved))
-                    return missing
+                    return missing, outcome.get("name")
 
                 try:
-                    missing = await asyncio.to_thread(_do_update)
+                    missing, now_named = await asyncio.to_thread(_do_update)
+                    if now_named and now_named == name.strip():
+                        renamed.add(name.strip().lower())
                     if missing:
                         yield _emit(f"    WARNING: {len(missing)} titles not found in library: {', '.join(missing[:5])}")
                     yield _emit(f"  ✓ Updated #{num} {name}")
@@ -2803,6 +2809,14 @@ async def run_surgical_deploy(req: SurgicalDeployRequest = SurgicalDeployRequest
             # Existing channels (update + unchanged) keep their DEPLOYED number; only genuine
             # new (create) channels use their draft number. (See merge_deployed_numbers.)
             new_managed = channel_engine.merge_deployed_numbers(desired, deployed)
+            # A rename saved in the editor but not applied yet: unless this run updated the
+            # channel (which set the name in Tunarr), keep the names Tunarr might still have.
+            pending = {(c.get("name") or "").strip().lower(): channel_engine.pending_names(c)
+                       for c in deployed if channel_engine.pending_names(c)}
+            for c in new_managed:
+                key = (c.get("name") or "").strip().lower()
+                if key in pending and key not in renamed:
+                    c["tunarr_name"] = pending[key]
 
             # Append foreign channels — they were not in desired but must be kept — and the
             # other server's channels, which this run never touches.

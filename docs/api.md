@@ -23,7 +23,7 @@ change; don't restate it back into `CLAUDE.md`.
 | GET | `/api/channels` | Full `channels.json`: `{channels, orphaned, suggested_channels}` |
 | PUT | `/api/channels` | Overwrite entire `channels.json` |
 | GET | `/api/channels/{number}` | Single channel by number; 404 if not found |
-| PUT | `/api/channels/{number}` | In-place update of one channel; 404 if not found |
+| PUT | `/api/channels/{number}` | In-place update of one channel; 404 if not found, 400 if the name is blank |
 | DELETE | `/api/channels/{number}` | Remove one channel; 404 if not found |
 | POST | `/api/channels/{number}/apply` | **Save-and-Apply**: push one channel to Tunarr **in place** (preserves Tunarr id/Plex mapping). The channel must already exist in Tunarr and in `channels.json`. Acquires `deploy_lock` to avoid racing the scheduler. Returns `{ok,number,program_count}`; 404 if not in `channels.json`, 400 if Tunarr not configured, 409 on engine error. |
 | POST | `/api/channels/{number}/icon` | Set/pin the channel's Tunarr icon. Body `{"mode": "badge"\|"tmdb"\|"custom"\|"clear", "url"?}`. badge/tmdb/custom pin the choice in channels.json (skipped by automatic art passes); clear resets to the Tunarr default and unpins. 409 if the channel isn't deployed or no verified TMDB logo exists. |

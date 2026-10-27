@@ -1862,6 +1862,86 @@ def merge_deployed_numbers(desired: list[dict], deployed: list[dict]) -> list[di
 
 # ── In-place channel updates (live recipes) ────────────────────────────────────
 
+def _dedupe_names(names):
+    """Non-blank names, first spelling of each kept (case/space-insensitive), in order."""
+    out, seen = [], set()
+    for n in names:
+        if isinstance(n, str) and n.strip() and n.strip().lower() not in seen:
+            seen.add(n.strip().lower())
+            out.append(n)
+    return out
+
+
+def pending_names(ch):
+    """The names Tunarr might still have for this channel besides its `name`, oldest first.
+
+    A rename in the Channels editor is saved to channels.json first and only reaches
+    Tunarr on the next Apply. Until Tunarr confirms a name, the entry's `tunarr_name`
+    lists every name it has had since the last confirmed one (a rename PUT can time out
+    after Tunarr applied it, so an unconfirmed name may be live too). An entry written
+    before this was a list has `tunarr_name` as one string; that reads as a one-item list.
+    """
+    raw = ch.get("tunarr_name")
+    if isinstance(raw, str):
+        raw = [raw]
+    return _dedupe_names(raw if isinstance(raw, list) else [])
+
+
+def guard_names(ch):
+    """The names the name-match guard accepts for this entry's Tunarr channel.
+
+    Every name Tunarr might still have (`pending_names`) and the entry's own name. Accepting
+    all of them means a rename made in Tunarr's own UI, or a rename PUT that timed out after
+    Tunarr applied it, can't lock the channel out — while a name the record never had is
+    still refused.
+    """
+    return _dedupe_names(pending_names(ch) + [ch.get("name")])
+
+
+def name_matches(actual, expected):
+    """True when Tunarr's channel name `actual` equals `expected` (one name or a list),
+    ignoring case and surrounding spaces."""
+    if isinstance(expected, str):
+        expected = [expected]
+    have = (actual or "").strip().lower()
+    return any(have == (e or "").strip().lower() for e in expected)
+
+
+def note_rename(old_entry, new_entry):
+    """Set or clear `tunarr_name` on `new_entry` when a save changes the channel's name.
+
+    The outgoing name joins the names Tunarr might still have (it may be live in Tunarr:
+    confirmed, renamed there by hand, or sent by an Apply that timed out). The new name
+    leaves that list, since the guard accepts it anyway. There's no cap: dropping a name
+    could drop the one Tunarr really has and lock the channel out. The list only grows
+    with this entry's own renames and a confirmed Apply or Build Channels update resets
+    it. The field is dropped when nothing is pending. Returns `new_entry`.
+    """
+    new_name = (new_entry.get("name") or "").strip().lower()
+    names = pending_names(old_entry)
+    old_name = old_entry.get("name")
+    if isinstance(old_name, str) and old_name.strip():
+        # Re-adding moves it to the end, so the list stays oldest first.
+        names = [n for n in names if n.strip().lower() != old_name.strip().lower()] + [old_name]
+    names = [n for n in names if n.strip().lower() != new_name]
+    new_entry.pop("tunarr_name", None)
+    if names:
+        new_entry["tunarr_name"] = names
+    return new_entry
+
+
+def rename_channel(tunarr_url, channel_id, new_name):
+    """Give the Tunarr channel a new name (same id, number and DVR mapping).
+    Raises ChannelEngineError when Tunarr can't be read or refuses the change."""
+    full = api(tunarr_url, "GET", f"/api/channels/{channel_id}")
+    if not isinstance(full, dict) or not full.get("id"):
+        raise ChannelEngineError("could not read the channel from Tunarr")
+    updated = dict(full)
+    updated["name"] = new_name
+    if api(tunarr_url, "PUT", f"/api/channels/{channel_id}", body=updated, timeout=30) is None:
+        raise ChannelEngineError("Tunarr did not accept the new name")
+
+
 def find_channel_by_number(tunarr_url, number):
     """Return the live Tunarr channel dict (incl. id) for a channel number, or None."""
     for ch in api(tunarr_url, "GET", "/api/channels") or []:
@@ -1970,8 +2050,12 @@ def restart_channel_schedule(tunarr_url, channel_id, now_ms=None):
 
 
 def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, expected_name=None, playback=None,
-                            filler_list_ids=None, restart=False):
+                            filler_list_ids=None, restart=False, new_name=None, outcome=None):
     """Patch an existing channel's programming in place — never delete/recreate.
+
+    new_name renames the Tunarr channel after the programming is set. A name that already
+    matches sends nothing; a blank one is ignored. If `outcome` (a dict) is given, it gets
+    `outcome["name"]` = the name the Tunarr channel has once this returns.
 
     Looks the channel up by number (preserving its Tunarr id and Plex DVR mapping),
     rebuilds the schedule from `resolved`, and POSTs it. This is the primitive the
@@ -1990,20 +2074,21 @@ def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, exp
     channel to the default shuffle behavior after each cycle.
 
     expected_name guards against the by-number scramble: if given, the Tunarr channel
-    found at `number` must carry that name (case/space-insensitive) or we refuse to
-    patch. channels.json can drift out of sync with Tunarr's numbering (two Programmarr
-    instances writing one Tunarr; an orphan channel shifting numbers), in which case
+    found at `number` must carry that name — or one of them, when it's a list such as
+    guard_names(entry) — (case/space-insensitive) or we refuse to patch. channels.json
+    can drift out of sync with Tunarr's numbering (two Programmarr instances writing one
+    Tunarr; an orphan channel shifting numbers), in which case
     blind by-number patching overwrites the wrong channel. Mismatch ⇒ skip, never scramble.
     """
     ch = find_channel_by_number(tunarr_url, number)
     if not ch:
         raise ChannelEngineError(f"Channel #{number} not found in Tunarr")
     if expected_name is not None:
-        actual = (ch.get("name") or "").strip().lower()
-        if actual != expected_name.strip().lower():
+        if not name_matches(ch.get("name"), expected_name):
+            shown = expected_name if isinstance(expected_name, str) else "' or '".join(expected_name)
             raise ChannelEngineError(
                 f"Channel #{number} name mismatch: Tunarr has '{ch.get('name')}', "
-                f"expected '{expected_name}' — refusing to overwrite "
+                f"expected '{shown}' — refusing to overwrite "
                 f"(channels.json out of sync with Tunarr)")
     schedule = build_schedule(SHUFFLE_MAP.get(shuffle, "shuffle"), resolved, pad_ms=pad_ms, playback=playback)
     if not schedule:
@@ -2023,4 +2108,15 @@ def update_channel_in_place(tunarr_url, number, shuffle, resolved, pad_ms=0, exp
             raise ChannelEngineError(
                 f"Channel #{number}: the schedule was updated, but its start time could not be "
                 f"reset ({e})")
+    now_named = (ch.get("name") or "").strip()
+    if new_name and new_name.strip() and new_name.strip() != now_named:
+        try:
+            rename_channel(tunarr_url, ch["id"], new_name.strip())
+        except ChannelEngineError as e:
+            raise ChannelEngineError(
+                f"Channel #{number}: the schedule was updated, but the new name could not be "
+                f"set in Tunarr ({e})")
+        now_named = new_name.strip()
+    if outcome is not None:
+        outcome["name"] = now_named
     return result
