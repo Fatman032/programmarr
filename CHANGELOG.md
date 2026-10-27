@@ -4,6 +4,34 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0-beta.3] — 2026-10-27 (BETA — Jellyfin support and the new play orders are beta)
+
+### Fixed
+
+- **The browser could keep showing the old screens after an update.** Until you pressed Ctrl+F5, the
+  browser could hold on to the previous version of Programmarr. It now always loads the current one
+  (press Ctrl+F5 one last time after installing this update).
+- **Renaming a channel in the Channels editor works.** Changing a channel's name and clicking
+  **Save and Apply** failed with a name-mismatch error, and afterwards live auto-update and Build
+  Channels could skip that channel. The new name now reaches Tunarr. Programmarr still refuses to
+  change a Tunarr channel whose name it doesn't recognize, so it never edits the wrong channel.
+
+### Changed
+
+- Saving a channel with a blank name now shows an error. Before, the blank name was saved, **Save
+  and Apply** failed with a confusing name-mismatch error, and live auto-update then skipped the
+  channel.
+- When Build Channels updates a channel, it now also fixes the channel's name in Tunarr if it
+  differs from the Planner's only in capital letters.
+
+### Notes
+
+- **Known issues in this beta:** the play order is set in two places in the channel editor —
+  *Shuffle mode* at the top and *Playback structure* further down (List order, Air-date order and
+  Timeline are in Playback structure, and they ignore Shuffle mode); renaming a channel the Planner
+  built can make the next Build Channels add a second copy under the Planner's name; a channel
+  deleted directly in Tunarr stays in Programmarr's list.
+
 ## [1.2.0-beta.2] — 2026-10-25 (BETA — Jellyfin support and the new play orders are beta)
 
 ### Added
