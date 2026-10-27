@@ -1,0 +1,25 @@
+name: Backend tests (fork)
+
+# FORK ONLY. Runs the backend pytest suite (pytest.ini -> backend/tests) on the same
+# pushes as the frontend type-check. Nothing here builds, tags or publishes an image.
+on:
+  push:
+    branches: [main, jellyfin]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - run: pip install -r backend/requirements-dev.txt
+      - run: pytest
