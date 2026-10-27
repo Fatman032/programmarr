@@ -107,6 +107,16 @@ app.include_router(pipeline_router.router, prefix="/api")
 app.include_router(recipes_router.router, prefix="/api")
 app.include_router(logs_router.router, prefix="/api")
 
+def spa_index_response() -> HTMLResponse:
+    """index.html with no-cache, so the browser checks for a new build on every load.
+    Without it an update shows the old screen until Ctrl+F5. The hashed /assets files
+    can still cache, because a new build gives them new names."""
+    return HTMLResponse(
+        content=(STATIC_DIR / "index.html").read_text(),
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
 
@@ -116,7 +126,7 @@ if STATIC_DIR.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        return HTMLResponse(content=(STATIC_DIR / "index.html").read_text())
+        return spa_index_response()
 
 
 if __name__ == "__main__":
