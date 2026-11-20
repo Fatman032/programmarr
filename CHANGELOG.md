@@ -4,6 +4,43 @@ All notable changes to Programmarr are documented here. This project follows
 [Semantic Versioning](https://semver.org/) and the spirit of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] — 2026-11-19
+
+The stable release of the 1.2.0 betas. The code is the same as 1.2.0-beta.3 — nothing has changed
+since. If you're coming from 1.1.x, here is what's new (details in the beta sections below):
+
+### Highlights
+
+- **Jellyfin support.** Use Plex, Jellyfin, or both. Setup, Export/Scan, the library picker,
+  collections, live rules and Live TV sync all work with Jellyfin. Jellyfin has no Mood/Style tags,
+  so those Planner channels stay Plex-only.
+- **One server per channel.** Every channel is tagged with the one server its content plays from and
+  never mixes Plex and Jellyfin copies. With both servers set up, Build Channels asks which server a
+  run is for, and a run only touches that server's channels. On upgrade, existing channels are
+  tagged Plex.
+- **Better matching.** Items are matched by TMDB, then IMDB, then the server's own id, then Tunarr's
+  id, and only then by exact title + year when that names exactly one item.
+- **Two new play orders** in the Channels editor's Playback structure: **List order** and
+  **Air-date order**.
+- **Programmarr goes easy on Tunarr.** Library reads ask only for the servers they need, only one
+  runs at a time, and Save and Apply reuses the editor's recent read — a save takes seconds.
+- **Add/update improvements.** Choose the channel number for new channels, see existing channels'
+  real numbers in the preview, and deploy with one click instead of two. The Planner no longer
+  forgets which channels it built.
+- **The export file is now `library.csv`** (it was `plex_library.csv`).
+- **Fixed:** renaming a channel in the Channels editor now works; the browser no longer keeps
+  showing old screens after an update.
+
+### Notes
+
+- **Known issues:** the play order is set in two places in the channel editor — *Shuffle mode* at
+  the top and *Playback structure* further down (List order, Air-date order and Timeline are in
+  Playback structure, and they ignore Shuffle mode); renaming a channel the Planner built can make
+  the next Build Channels add a second copy under the Planner's name; a channel deleted directly in
+  Tunarr stays in Programmarr's list.
+- After installing this update, press Ctrl+F5 once in the browser so it loads the new screens
+  (needed when coming from 1.1.x or an earlier beta; after that it always loads the current version).
+
 ## [1.2.0-beta.3] — 2026-10-27 (BETA — Jellyfin support and the new play orders are beta)
 
 ### Fixed

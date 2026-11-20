@@ -19,7 +19,7 @@
 > - **Nothing is skipped silently.** A title that can't be found is reported with the reason, on the channel list and in the editor.
 > - **Live rules.** A channel can follow a genre, studio, director, actor or decade, asked of Plex again on every refresh, so a Live channel gains new matches on its own.
 > - **Several commercial filler lists per channel,** and they now actually reach Tunarr when you Apply.
-> - **Jellyfin support (beta)** — see [Jellyfin (beta)](#jellyfin-beta) below.
+> - **Jellyfin support** — see [Jellyfin](#jellyfin) below.
 >
 > Images: `ghcr.io/fatman032/programmarr:latest` is the latest release; every build is also tagged `sha-<short commit>` (pin one of those if you want a version that never moves). A **pre-release** (beta) is published on GitHub as a pre-release and tagged `:beta`; `:latest` only ever points at a normal release.
 
@@ -29,13 +29,12 @@ You **compose** the lineup in a **Planner**: pick the genres, decades, studios, 
 
 Channels can also be **self-maintaining**: mark one "live" and Programmarr re-checks it against your library on a schedule and patches it in place — new episodes and new franchise films appear on their own, no redeploy.
 
-**Requires:** [Tunarr](https://github.com/chrisbenincasa/tunarr) + **Plex**, or **Jellyfin** (beta), or both
+**Requires:** [Tunarr](https://github.com/chrisbenincasa/tunarr) + **Plex**, or **Jellyfin**, or both
 
-### Jellyfin (beta)
+### Jellyfin
 
-Jellyfin support is in the **beta** — [v1.2.0-beta.1](https://github.com/Fatman032/programmarr/releases/tag/v1.2.0-beta.1),
-image `ghcr.io/fatman032/programmarr:beta`. Stable (`:latest`) is still Plex-only. Back up your `data`
-folder before trying it. Asked for in upstream issue [#36](https://github.com/jamesmattson/programmarr/issues/36).
+Jellyfin support is new in [v1.2.0](https://github.com/Fatman032/programmarr/releases/tag/v1.2.0)
+and is in the normal `:latest` image. Back up your `data` folder before upgrading. Asked for in upstream issue [#36](https://github.com/jamesmattson/programmarr/issues/36).
 
 - **Set up Plex, Jellyfin, or both** — Jellyfin takes a URL and an API key (Jellyfin: Dashboard → API Keys).
 - **Everything works the same as with Plex:** the library scan, channel building, pinned titles,
